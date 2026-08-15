@@ -54,15 +54,24 @@ describe('ic_ds_ icon set', () => {
   })
 })
 
-describe('FishLogo', () => {
-  it('renders the fish path in currentColor at the native ratio', () => {
-    const { container } = render(<primitives.FishLogo />)
-    const svg = container.querySelector('svg')!
-    expect(svg.getAttribute('width')).toBe('24')
-    expect(Number(svg.getAttribute('height'))).toBeCloseTo(17.66, 1)
-    expect(svg.getAttribute('viewBox')).toBe('0 0 23.16 17.04')
-    expect(container.querySelectorAll('path')).toHaveLength(1)
-    expect(container.innerHTML).toContain('currentColor')
-    expect(container.innerHTML).not.toContain('M0 0L23.16')
+describe('BrandMark', () => {
+  it('renders the Biyocon brandmark image at the requested bounding-box size', () => {
+    const { container } = render(<primitives.BrandMark size={26} className="mark" />)
+    const img = container.querySelector('img')!
+    expect(img.getAttribute('src')).toBe('/biyocon-brandmark.png')
+    expect(img.getAttribute('height')).toBe('26')
+    expect(img.classList.contains('mark')).toBe(true)
+    expect(img.getAttribute('alt')).toBe('')
+  })
+})
+
+describe('BrandWordmark', () => {
+  it('renders the Biyocon wordmark image at the requested height', () => {
+    const { container } = render(<primitives.BrandWordmark size={28} className="word" />)
+    const img = container.querySelector('img')!
+    expect(img.getAttribute('src')).toBe('/biyocon-wordmark.png')
+    expect(img.getAttribute('height')).toBe('28')
+    expect(img.classList.contains('word')).toBe(true)
+    expect(img.getAttribute('alt')).toBe('')
   })
 })
