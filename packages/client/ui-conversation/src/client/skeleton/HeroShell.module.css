@@ -23,7 +23,7 @@
   overflow: visible;
 }
 
-/* figma 34:10411: fish + title, gap 10, centered; 26/32 wt500. The preview
+/* figma 34:10411: brandmark + title, gap 10, centered; 26/32 wt500. The preview
    badge is a product addition outside that source: a mono superscript pill
    riding the title's top-right. */
 .headline {
@@ -62,7 +62,7 @@
 }
 
 /* Keep hover detection on a stationary box while the mark moves within it. */
-.fishHitbox {
+.brandmarkHitbox {
   grid-row: 1;
   grid-column: 1;
   display: inline-flex;
@@ -70,13 +70,13 @@
   justify-content: center;
 }
 
-/* Keep the hero mark in the same primary ink as its headline. */
-.fish {
-  color: var(--dsw-alias-label-primary);
+/* The Biyocon brandmark keeps its source brand blue; transform-origin is kept
+   for the same subtle hover motion the previous mark used. */
+.brandmark {
   transform-origin: 50% 60%;
 }
 
-@keyframes hero-fish-swim {
+@keyframes hero-brandmark-nudge {
   0%, 100% {
     transform: translate(0, 0) rotate(0deg);
   }
@@ -91,8 +91,8 @@
 }
 
 @media (hover: hover) and (prefers-reduced-motion: no-preference) {
-  .fishHitbox:hover .fish {
-    animation: hero-fish-swim var(--ds-transition-duration-slow) var(--ds-ease-in-out);
+  .brandmarkHitbox:hover .brandmark {
+    animation: hero-brandmark-nudge var(--ds-transition-duration-slow) var(--ds-ease-in-out);
   }
 }
 

@@ -17,14 +17,13 @@ exports[`sidebar shell snapshots > renders the collapsed rail after the crossfad
         class="iconButton toggle"
         type="button"
       >
-        <svg
+        <img
+          alt=""
           aria-hidden="true"
-          class="railFish"
-          data-content="965fe321"
-          fill="none"
-          height="17.6580310880829"
-          viewBox="0 0 23.16 17.04"
-          width="24"
+          class="railBrandmark"
+          height="24"
+          src="/biyocon-brandmark.png"
+          style="width: auto; display: block;"
         />
         <svg
           class="panelIcon"
@@ -100,13 +99,12 @@ exports[`sidebar shell snapshots > renders the expanded column (wordmark, capsul
         class="brand wide"
         type="button"
       >
-        <svg
+        <img
+          alt=""
           aria-hidden="true"
-          data-content="951274b9"
-          fill="none"
-          height="24"
-          viewBox="0 0 182 24"
-          width="182"
+          height="26"
+          src="/biyocon-wordmark.png"
+          style="width: auto; display: block;"
         />
       </button>
       <button
@@ -193,13 +191,12 @@ exports[`sidebar shell snapshots > renders the expanded column in the default lo
         class="brand wide"
         type="button"
       >
-        <svg
+        <img
+          alt=""
           aria-hidden="true"
-          data-content="951274b9"
-          fill="none"
-          height="24"
-          viewBox="0 0 182 24"
-          width="182"
+          height="26"
+          src="/biyocon-wordmark.png"
+          style="width: auto; display: block;"
         />
       </button>
       <button
