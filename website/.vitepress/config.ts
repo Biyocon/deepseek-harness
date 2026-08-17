@@ -1,6 +1,5 @@
 /** VitePress configuration for the locally projected documentation site. */
 
-import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import type { DefaultTheme, PageData } from 'vitepress'
 import type { ViteDevServer } from 'vite'
@@ -164,14 +163,6 @@ const sharedTheme: Pick<DefaultTheme.Config, 'search' | 'socialLinks' | 'editLin
 const base = process.env.DOCS_BASE ?? '/'
 
 /**
- * The DeepSeek wordmark, inlined so its `currentColor` fills follow the active
- * theme. An `<img>` would freeze the mark at the colors the file declares.
- */
-const wordmark = readFileSync(resolve(import.meta.dirname, '../public/wordmark.svg'), 'utf8')
-  .trim()
-  .replace('<svg ', '<svg class="dsh-wordmark" ')
-
-/**
  * Styles the default theme does not provide, carried inline because the site
  * runs the stock theme with no theme directory of its own.
  *
@@ -184,6 +175,7 @@ const wordmark = readFileSync(resolve(import.meta.dirname, '../public/wordmark.s
  */
 const siteStyle = `
 .dsh-lockup { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.dsh-biyocon-wordmark { display: block; height: 22px; width: auto; max-width: 100%; }
 .dsh-wordmark { display: block; height: 22px; width: auto; color: var(--vp-c-text-1); }
 .dsh-tag {
   display: inline-flex;
@@ -236,18 +228,18 @@ const scrollbarScript = `
 `
 
 /**
- * Navigation-bar title: the DeepSeek wordmark and the release-stage tag.
+ * Navigation-bar title: the Biyocon Harness wordmark and the release-stage tag.
  * VitePress renders `siteTitle` as HTML.
  *
  * @param previewTag - Localized release-stage label.
  * @returns Markup placed beside the navigation-bar home link.
  */
 function siteTitle(previewTag: string): string {
-  return `<span class="dsh-lockup">${wordmark}<span class="dsh-tag">${previewTag}</span></span>`
+  return `<span class="dsh-lockup"><img class="dsh-biyocon-wordmark" src="${base}biyocon-wordmark.png" alt="Biyocon Harness"><span class="dsh-tag">${previewTag}</span></span>`
 }
 
 export default withMermaid({
-  title: 'DeepSeek Harness',
+  title: 'Biyocon Harness',
   description: '用于构建 Agent Harness 的插件化 SDK',
   base,
   head: [
