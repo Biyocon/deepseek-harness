@@ -22,7 +22,7 @@ Status: implemented
 
 [scripts/project-doc-site.ts](../../../../scripts/project-doc-site.ts) 中的 `projectedPageContent` 会丢弃语言切换行和仓库徽章。切换行的匹配被限制在前八行内，因此展示该约定的教程仍能渲染出它的示例。
 
-导航栏标题是内联进 `siteTitle` 的 DeepSeek 字标，VitePress 会将其按 HTML 渲染。内联正是让字标的 `currentColor` 填充跟随当前主题的原因；`themeConfig.logo` 渲染为 `<img>`，会把字标固定为文件声明的颜色，并且需要为每套主题各准备一份资源。侧边栏滚动条平时不可见，滚动时出现，通过 `data-` 属性而非 class 标记，因为 Vue 在 patch 该元素时会整体重写 `class`。
+导航栏标题是 Biyocon Harness 字标，`siteTitle` 以 VitePress 按 HTML 渲染的标记返回它：一个 `<img>`，资源来自 `website/public/biyocon-wordmark.png`，其 `src` 通过 `base` 插值，因此在非根部署下也能正确解析。该位图承载品牌声明的颜色，在两套主题中均成立，因此一份资源同时服务深色与浅色主题，无需为每套主题各备文件。侧边栏滚动条平时不可见，滚动时出现，通过 `data-` 属性而非 class 标记，因为 Vue 在 patch 该元素时会整体重写 `class`。
 
 ## 考虑过的替代方案
 
@@ -38,4 +38,4 @@ Status: implemented
 
 剥离 chrome 不改动规范 Markdown——切换行与徽章仍服务于 GitHub 读者。代价是投影器现在知晓源语料的两项呈现约定，而采用不同切换行措辞的页面将不会被匹配到。
 
-字标是同一图形的第二份副本，另两份位于 `apps/web/public/favicon.svg` 和 `packages/client/ui-primitives/src/FishLogo.tsx`，各自承载自己的呈现方式。DeepSeek 字标的变更只有通过更新这份副本才能到达文档站。
+站点渲染专属的位图 `website/public/biyocon-wordmark.png`，而 WebUI 携带独立的资源：`apps/web/public/favicon.png`、`biyocon-brandmark.png` 和 `biyocon-wordmark.png`，由 `packages/client/ui-primitives` 中的 `BrandMark.tsx` 与 `BrandWordmark.tsx` 渲染。各副本分别更新；对某一字标的变更只有通过更新其自己的资源才能到达其他表面。

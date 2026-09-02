@@ -22,7 +22,7 @@ Subsystem pages are grouped by concern — overview, core and scopes, sessions a
 
 `projectedPageContent` in [scripts/project-doc-site.ts](../../../../scripts/project-doc-site.ts) drops the language-switcher line and the repository badge. The switcher match is confined to the first eight lines so a tutorial that shows the convention still renders its example.
 
-The navigation-bar title is the DeepSeek wordmark inlined into `siteTitle`, which VitePress renders as HTML. Inlining is what lets the mark's `currentColor` fills follow the active theme; `themeConfig.logo` renders an `<img>`, which freezes the mark at the colors its file declares and would need one asset per theme. The sidebar scrollbar rests invisible and appears while scrolling, marked by a `data-` attribute rather than a class because Vue rewrites `class` wholesale when it patches the element.
+The navigation-bar title is the Biyocon Harness wordmark, which `siteTitle` returns as markup VitePress renders as HTML: an `<img>` served from `website/public/biyocon-wordmark.png`, with its `src` interpolated through `base` so the asset also resolves for non-root deployments. The raster carries the brand's declared colors that hold in both themes, so one asset serves dark and light without per-theme files. The sidebar scrollbar rests invisible and appears while scrolling, marked by a `data-` attribute rather than a class because Vue rewrites `class` wholesale when it patches the element.
 
 ## Alternatives considered
 
@@ -38,4 +38,4 @@ The reference sidebar measures 1452px with every subsystem group collapsed, agai
 
 Canonical Markdown is unchanged by the chrome stripping — the switcher and badge still serve GitHub readers. The cost is that the projector now knows two presentation conventions of the source corpus, which a page written with a different switcher wording would not match.
 
-The wordmark is a second copy of a mark that also lives in `apps/web/public/favicon.svg` and `packages/client/ui-primitives/src/FishLogo.tsx`, each carrying its own presentation. A change to the DeepSeek wordmark reaches the documentation site only by updating this copy.
+The site renders a dedicated raster, `website/public/biyocon-wordmark.png`, while the WebUI carries separate assets: `apps/web/public/favicon.png`, `biyocon-brandmark.png`, and `biyocon-wordmark.png`, rendered by `BrandMark.tsx` and `BrandWordmark.tsx` in `packages/client/ui-primitives`. Each copy is updated separately; a change to one mark reaches the other surfaces only by updating its own asset.
