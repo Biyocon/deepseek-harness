@@ -54,6 +54,8 @@ Windows 仓库工作在超过 16 核后收益很小，但 32 核池可以让完�
 
 另有一条串行 Linux 参考在每次 `master` 推送时运行于公司自有的自托管池（`vm-backup` 标签：一台 64 核虚拟机，运行 6 个常驻的 systemd 管理运行器实例）。它是热备演练而非必需检查：每次运行都重新证明这台持久化虚拟机能够执行完整的未分片聚合流程。实际切换机制已预先布线：三个必需 Linux 作业通过写入权限持有者可管理的仓库变量 `DSH_CI_FAILOVER_LINUX` 解析运行器池，因此故障响应就是设置一个变量并重跑——无需合并（合并本身会被正在失败的检查阻塞，形成死锁）（[切换手册](2026-07-26-ci-failover-runbook.md)）。该热备通道由 push 触发，执行的始终是基础分支自身的工作流定义。但需要注意：故障切换期间，`pull_request` 作业确实会带着 PR merge 引用自带的工作流定义到达这些运行器——信任边界是仓库成员资格（仓库为私有且禁用 fork，选择器排除 Dependabot），详见[故障切换手册](2026-07-26-ci-failover-runbook.md)的记录。
 
+Biyocon 公共 fork 例外。公共 fork `Biyocon/deepseek-harness` 无法访问上游使用的私有企业或自托管运行器标签。在该 fork 中，上游通过企业池解析的必需拉取请求作业改用标准 GitHub 托管运行器：三个 Linux 主作业和 `all checks passed` 聚合流程解析到 `ubuntu-latest`，而独立的原生 Windows 作业解析到 `windows-2025`。自托管热备演练（`serial-linux-selfhosted`、`serial-windows`）和手动大型运行器基准测试通过 `github.repository != 'Biyocon/deepseek-harness'` 进行保护，因此不会在公共 fork 上执行。上游工作流定义在其他方面保持字节级一致。
+
 ## 曾考虑的替代方案
 
 **保留 3 个粗粒度 Linux 主流程通道。** 核心、CPU 和生产网站作业均达到延迟目标，但它们需要 3 轮设置，而且在大型运行器已经可用后仍对主 Node 工作进行分片。全规格运行轨迹表明，让单机聚合流程超过 1 分钟的是一项不必要的依赖，而非主机容量不足。

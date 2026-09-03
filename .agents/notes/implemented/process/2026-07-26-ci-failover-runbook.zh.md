@@ -60,3 +60,5 @@ Status: implemented
 ## 后果
 
 从托管池故障中恢复只需切换受影响平台的变量（任何写者可设）加一次重跑，关键路径上没有合并。代价是每个平台都要维护第二套运行器拓扑：热备通道在每次 master 推送时都运行它们，避免故障切换目标变得陈旧；而 `ci.yml` 中的并发与缓存恢复分支带有一条 `selfhosted` 支路（仅 Linux），必须与托管支路保持同步。按平台拆分开关多了一个需要管理的变量，但把每个开关的影响范围限定在单个平台的作业上。
+
+Biyocon 公共 fork 例外。公共 fork `Biyocon/deepseek-harness` 无法访问上游使用的私有企业或自托管运行器标签，因此不使用 `DSH_CI_FAILOVER_LINUX` 或 `DSH_CI_FAILOVER_WINDOWS` 变量。在该 fork 中，上游通过企业池解析的必需拉取请求作业改用标准 GitHub 托管运行器：三个 Linux 主作业和 `all checks passed` 聚合流程解析到 `ubuntu-latest`，而独立的原生 Windows 作业解析到 `windows-2025`。自托管热备演练（`serial-linux-selfhosted`、`serial-windows`）和手动大型运行器基准测试通过 `github.repository != 'Biyocon/deepseek-harness'` 进行保护，因此不会在公共 fork 上执行。上游工作流定义在其他方面保持字节级一致。

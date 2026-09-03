@@ -18,6 +18,8 @@ Status: implemented
 
 当前主拓扑及其测量结果以[大型运行器决策](2026-07-22-evidence-based-larger-hosted-runners.md)为准。[跨平台串行参考流程](2026-07-21-serial-cross-platform-ci-reference.md)继续作为独立的标准托管完整性检查，手动大型运行器套件则保留规格比较，同时不扩大普通必需矩阵。
 
+Biyocon 公共 fork 例外。公共 fork `Biyocon/deepseek-harness` 无法访问上游使用的私有企业或自托管运行器标签。在该 fork 中，上游通过企业池解析的必需拉取请求作业改用标准 GitHub 托管运行器：三个 Linux 主作业和 `all checks passed` 聚合流程解析到 `ubuntu-latest`，而独立的原生 Windows 作业解析到 `windows-2025`。自托管热备演练（`serial-linux-selfhosted`、`serial-windows`）和手动大型运行器基准测试通过 `github.repository != 'Biyocon/deepseek-harness'` 进行保护，因此不会在公共 fork 上执行。上游工作流定义在其他方面保持字节级一致。
+
 ## 曾考虑的替代方案
 
 **将 Linux 主作业和聚合流程保留在标准容量上。** 此方案消除了剩余的企业级运行器分配依赖，但标准运行器上的完整作业反馈明显更慢，仍会遇到共享容量排队。当前拆分既保留可移植兼容性和串行证据，又将企业级运行器容量用于 Linux 主关键路径。
