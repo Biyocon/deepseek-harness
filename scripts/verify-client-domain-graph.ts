@@ -10,25 +10,30 @@
  *   1  <domain>/ + service  domain implementations (skeleton/, chat/, ...)
  *   2  apply.ts, index.ts   assembly point and re-export shell
  *
+ * Root-boundary rule: imports are resolved against the actual `src/client/`
+ * directory. Any relative target that lands outside that root (i.e. the
+ * resolved relative path starts with `..`) is governed by package-level
+ * import rules, not this gate, and is ignored here.
+ *
  * Run directly:
  *   pnpm exec tsx scripts/verify-client-domain-graph.ts
  */
 
 import { globSync, readdirSync, readFileSync, statSync } from 'node:fs'
-import { join, resolve, sep } from 'node:path'
+import { dirname, join, relative, resolve, sep } from 'node:path'
 
 const root = resolve(import.meta.dirname, '..')
 const CLIENT_DIR = join(root, 'packages/client')
 
 /** Directory names treated as the shared contract layer (importable by all). */
-const CONTRACT_DIRS = new Set(['contract'])
+export const CONTRACT_DIRS = new Set(['contract'])
 /** Top-level client files allowed to import across domains (assembly layer). */
-const ASSEMBLY_FILES = new Set(['apply.ts', 'index.ts', 'index.tsx'])
+export const ASSEMBLY_FILES = new Set(['apply.ts', 'index.ts', 'index.tsx'])
 
-interface Violation { file: string; imported: string; reason: string }
+export interface Violation { file: string; imported: string; reason: string }
 
 /** Recursively list .ts/.tsx files under dir (relative paths). */
-function listSources(dir: string): string[] {
+export function listSources(dir: string): string[] {
   return globSync('**/*.{ts,tsx}', { cwd: dir })
     .map(rel => rel.split(sep).join('/'))
     .filter(rel => !/\.legacy\./.test(rel.slice(rel.lastIndexOf('/') + 1)))
@@ -36,12 +41,30 @@ function listSources(dir: string): string[] {
 }
 
 /** First path segment of a client-relative file, or '' for top-level files. */
-function domainOf(rel: string): string {
+export function domainOf(rel: string): string {
   const ix = rel.indexOf('/')
   return ix === -1 ? '' : rel.slice(0, ix)
 }
 
-function checkPackage(pkgName: string, clientDir: string): Violation[] {
+/**
+ * Resolve a relative import specifier against the importing file and the
+ * client-root directory.
+ * @returns The normalized path relative to clientRoot, and whether it escapes
+ *          the client root (starts with `..`).
+ */
+export function resolveClientImport(
+  clientRoot: string,
+  importerRel: string,
+  specifier: string,
+): { targetRel: string; outside: boolean } {
+  const importerDir = importerRel.includes('/') ? dirname(importerRel) : ''
+  const targetAbs = resolve(clientRoot, importerDir, specifier)
+  const targetRel = relative(clientRoot, targetAbs).split(sep).join('/')
+  const outside = targetRel === '..' || targetRel.startsWith('../')
+  return { targetRel, outside }
+}
+
+export function checkPackage(pkgName: string, clientDir: string): Violation[] {
   const violations: Violation[] = []
   const files = listSources(clientDir)
   for (const rel of files) {
@@ -52,18 +75,9 @@ function checkPackage(pkgName: string, clientDir: string): Violation[] {
     for (const match of source.matchAll(/from\s+['"](\.[^'"]+)['"]/g)) {
       const spec = match[1]
       if (spec === undefined) continue
-      // Resolve the relative specifier against the importing file's directory
-      // to a client-dir-relative path.
-      const fromDir = rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/')) : ''
-      const parts = (fromDir ? fromDir.split('/') : [])
-      for (const seg of spec.split('/')) {
-        if (seg === '.') continue
-        if (seg === '..') parts.pop()
-        else parts.push(seg)
-      }
-      const target = parts.join('/')
-      if (target.startsWith('..')) continue // out of client dir (package root) — package-level rules govern
-      const toDomain = domainOf(target)
+      const { targetRel, outside } = resolveClientImport(clientDir, rel, spec)
+      if (outside) continue // outside src/client — package-level rules govern
+      const toDomain = domainOf(targetRel)
       if (toDomain === '' || CONTRACT_DIRS.has(toDomain)) continue // top-level shared file or contract layer
       if (fromDomain === toDomain) continue // inside one domain
       violations.push({
@@ -78,21 +92,28 @@ function checkPackage(pkgName: string, clientDir: string): Violation[] {
   return violations
 }
 
-const violations: Violation[] = []
-for (const pkg of readdirSync(CLIENT_DIR)) {
-  const clientDir = join(CLIENT_DIR, pkg, 'src/client')
-  try {
-    if (!statSync(clientDir).isDirectory()) continue
-  } catch {
-    // No client half in this package — nothing to layer-check.
-    continue
+function run(): number {
+  const violations: Violation[] = []
+  for (const pkg of readdirSync(CLIENT_DIR)) {
+    const clientDir = join(CLIENT_DIR, pkg, 'src/client')
+    try {
+      if (!statSync(clientDir).isDirectory()) continue
+    } catch {
+      // No client half in this package — nothing to layer-check.
+      continue
+    }
+    violations.push(...checkPackage(pkg, clientDir))
   }
-  violations.push(...checkPackage(pkg, clientDir))
+
+  if (violations.length > 0) {
+    console.error(`verify-client-domain-graph: ${violations.length} violation(s):`)
+    for (const v of violations) console.error(`  ${v.file} -> ${v.imported}\n    ${v.reason}`)
+    return 1
+  }
+  console.log('verify-client-domain-graph: client domain layering clean.')
+  return 0
 }
 
-if (violations.length > 0) {
-  console.error(`verify-client-domain-graph: ${violations.length} violation(s):`)
-  for (const v of violations) console.error(`  ${v.file} -> ${v.imported}\n    ${v.reason}`)
-  process.exit(1)
+if (import.meta.main) {
+  process.exit(run())
 }
-console.log('verify-client-domain-graph: client domain layering clean.')
