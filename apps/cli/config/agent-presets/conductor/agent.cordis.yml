@@ -1,0 +1,20 @@
+# The `conductor` agent preset: the model-facing Conductor tool plus an
+# isolated provider for the specialist role skills.
+
+# The specialist role files under `.agents/conductor/roles` load as skills here
+# (they carry frontmatter naming `conductor-*` and are not model-invocable; the
+# Conductor tool injects one per child). This provider is isolated so it never
+# re-scans the default skill roots, which the deployment already serves.
+- id: conductor-roles
+  name: '@deepseek-ai/dsh-skill-filesystem'
+  config:
+    providerName: conductor-roles
+    includeDefaultRoots: false
+    customSkillDirs:
+      - .agents/conductor/roles
+    watch: false
+
+# The model-facing entry point that mints a run and drives the gated
+# specialist state machine; it reads the role skills above to compose each child.
+- id: tool-conductor
+  name: '@deepseek-ai/dsh-tool-conductor'

@@ -63,6 +63,7 @@ import * as ToolWeb from '@deepseek-ai/dsh-tool-web'
 import VmWorkflowEngine from '@deepseek-ai/dsh-workflow-worker-thread'
 import * as ToolRalph from '@deepseek-ai/dsh-tool-ralph'
 import * as ToolWorkflow from '@deepseek-ai/dsh-tool-workflow'
+import * as ToolConductor from '@deepseek-ai/dsh-tool-conductor'
 import { githubSlug } from './verify-md-links.ts'
 
 /** Attachment seam marker that makes the attachments-conditional `read_image` schema harvestable. */
@@ -404,6 +405,21 @@ const TOOL_PACKAGES: ToolPackage[] = [
     },
     note:
       'A fixed foreground workflow starts one fresh structured child per round; the model selects only the immutable objective and an optional round cap.',
+  },
+  {
+    pkg: '@deepseek-ai/dsh-tool-conductor',
+    dir: 'tool-conductor',
+    source: 'packages/conductor/tool-conductor/src/index.ts',
+    requires: ['ctx.tools', 'ctx.subagents', 'ctx.skills', 'a calling Agent (exec.agent parents every specialist)'],
+    writes: ['tool/call', 'tool/result', 'child session events through the chosen provider'],
+    async mount(ctx) {
+      await ctx.plugin(SubagentRuntime)
+      registerCatalogSubagentProvider(ctx, 'mock')
+      await ctx.plugin(SkillRegistry)
+      await ctx.plugin(ToolConductor, { subagentProvider: 'mock' })
+    },
+    note:
+      'The model-facing Conductor tool drives the gated Detective-to-Arbiter state machine by spawning one fresh structured-output specialist per stage and returns the Arbiter GO/NO-GO decision or a blocker.',
   },
   {
     pkg: '@deepseek-ai/dsh-tool-skill',
