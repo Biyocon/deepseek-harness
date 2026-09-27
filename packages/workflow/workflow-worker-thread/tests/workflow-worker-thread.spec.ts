@@ -55,7 +55,13 @@ interface ControlledRun {
  * the request signal fires, like the real in-process backends.
  */
 class StubProvider implements SubagentProvider {
-  readonly capabilities: SubagentCapabilities = { outputSchema: true, depthLimit: true, toolFilter: true, persona: false }
+  readonly capabilities: SubagentCapabilities = {
+    outputSchema: true,
+    depthLimit: true,
+    toolFilter: true,
+    toolGuard: true,
+    persona: true,
+  }
   readonly inheritsParentContext = false
   readonly runs: ControlledRun[] = []
 
@@ -232,6 +238,24 @@ describe('dsh-workflow-worker-thread', () => {
 
       expect(result.value).toBe('stub reply')
       expect(provider.runs[0]!.request.agentOptions).toEqual({ provider: 'openai' })
+    })
+
+    it('applies trusted per-run child composition to every provider request', async () => {
+      const { ctx, parent, provider } = await setup()
+      const childToolFilter = { allow: ['read'] }
+      const childToolGuard = () => 'owner denial'
+      const handle = ctx.workflowEngine.start({
+        ...scripted("return await agent('bounded child')"),
+        parent,
+        childToolFilter,
+        childToolGuard,
+        childPersona: 'bounded persona',
+      })
+      expect((await handle.result).value).toBe('stub reply')
+      await handle.dispose()
+      expect(provider.runs[0]!.request.toolFilter).toBe(childToolFilter)
+      expect(provider.runs[0]!.request.toolGuard).toBe(childToolGuard)
+      expect(provider.runs[0]!.request.persona).toBe('bounded persona')
     })
 
     it('a start-request provider override selects every child without changing the engine default', async () => {

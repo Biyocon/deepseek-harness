@@ -16,6 +16,7 @@ import { assertNever } from '@deepseek-ai/dsh-llm'
 import { snapshotJsonValue } from '@deepseek-ai/dsh-session'
 import type SubagentRuntime from '@deepseek-ai/dsh-subagent'
 import type { SubagentRun } from '@deepseek-ai/dsh-subagent'
+import type { ToolGuard, ToolRestriction } from '@deepseek-ai/dsh-tools'
 import type { WorkflowAgentEndInfo, WorkflowAgentInfo, WorkflowMeta, WorkflowResult, WorkflowRun, WorkflowRunId } from '@deepseek-ai/dsh-workflow'
 import { renderThrown } from './realm.ts'
 import type { ExecutionObserver } from './runtime.ts'
@@ -27,6 +28,13 @@ import type { ChildResult, ChildStartRequest, WorkerInit } from './types.ts'
 interface ChildRecord {
   readonly run: SubagentRun
   disposal?: Promise<void>
+}
+
+/** Trusted host-side composition installed into every child of one workflow. */
+interface WorkflowChildComposition {
+  readonly toolFilter?: ToolRestriction
+  readonly toolGuard?: ToolGuard
+  readonly persona?: string
 }
 
 /**
@@ -137,6 +145,7 @@ export class WorkerRun implements WorkflowRun {
     private readonly parent: Agent,
     init: WorkerInit,
     private readonly provider: string,
+    private readonly childComposition: WorkflowChildComposition,
     private readonly disposeGraceMs: number,
     private readonly observer: ExecutionObserver,
     signal: AbortSignal | undefined,
@@ -353,6 +362,15 @@ export class WorkerRun implements WorkflowRun {
         prompt: [{ type: 'text', text: request.prompt }],
         parent: this.parent,
         signal: this.controller.signal,
+        ...this.childComposition.toolFilter !== undefined
+          ? { toolFilter: this.childComposition.toolFilter }
+          : {},
+        ...this.childComposition.toolGuard !== undefined
+          ? { toolGuard: this.childComposition.toolGuard }
+          : {},
+        ...this.childComposition.persona !== undefined
+          ? { persona: this.childComposition.persona }
+          : {},
         ...request.schema !== undefined ? { outputSchema: request.schema } : {},
         ...request.provider !== undefined || request.model !== undefined
           ? {

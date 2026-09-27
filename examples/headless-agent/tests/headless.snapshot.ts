@@ -45,6 +45,8 @@ const credentialsConfigPath = fileURLToPath(new URL('../credentials.cordis.snaps
 const invalidCredentialScenarioDir = join(snapshotsDir, 'invalid-credential')
 const ralphScenarioDir = join(snapshotsDir, 'ralph-loop')
 const ralphConfigPath = fileURLToPath(new URL('../ralph.cordis.snapshot.yml', import.meta.url))
+const conductorScenarioDir = join(snapshotsDir, 'conductor-closeout-authorization')
+const conductorConfigPath = fileURLToPath(new URL('../conductor.cordis.snapshot.yml', import.meta.url))
 const settlementScenarioDir = join(snapshotsDir, 'subagent-settlement')
 const settlementConfigPath = fileURLToPath(new URL('../subagent-settlement.cordis.snapshot.yml', import.meta.url))
 const startupFailureConfigPath = fileURLToPath(new URL('./fixtures/startup-activation-error/cordis.yml', import.meta.url))
@@ -770,6 +772,43 @@ describe('headless stream-json snapshots', () => {
           expect(calls.map(record => (record.data as JsonObject | undefined)?.name))
             .toEqual(['structured_output'])
         }
+      },
+    })
+
+    expect(result.stderr).toBe('')
+    const normalized = normalizeHeadlessStream(result.stdout, runCwd)
+    if (refreshing) await writeFile(streamExpected, normalized)
+    expect(normalized).toBe(await readFile(streamExpected, 'utf8'))
+  }, LOADER_SMOKE_TEST_TIMEOUT_MS)
+
+  it('rejects Conductor closeout authorization without an existing run', async () => {
+    const prompt = await scenarioPrompt(conductorScenarioDir, 'conductor-closeout-authorization')
+    const streamExpected = join(conductorScenarioDir, 'stream-json.expected.jsonl')
+    let runCwd = ''
+    const result = await runLoaderSmoke({
+      label: 'Conductor closeout authorization headless stream-json snapshot',
+      tempDirPrefix: 'headless-snapshot-conductor-closeout-',
+      binScript,
+      libBinScript: binScript,
+      configPath: conductorConfigPath,
+      binArgs: [conductorConfigPath, prompt],
+      tsconfigPath,
+      env: {
+        DSH_SNAPSHOT: 'replay',
+        DSH_SNAPSHOT_FILE: join(conductorScenarioDir, 'session.jsonl'),
+        DSH_SNAPSHOT_OVERRIDE: join(conductorScenarioDir, 'replay.override.json'),
+        NODE_OPTIONS: [process.env.NODE_OPTIONS, '--disable-warning=ExperimentalWarning'].filter(Boolean).join(' '),
+      },
+      prepare: (cwd) => { runCwd = cwd },
+      inspect: async (cwd) => {
+        const logs = await persistedLogs(cwd)
+        expect(logs).toHaveLength(1)
+        const records = parseJsonl(logs[0]?.content ?? '')
+        const call = records.find(record => record.type === 'tool/call')
+        expect((call?.data as JsonObject | undefined)?.name).toBe('conductor')
+        const toolResult = records.find(record => record.type === 'tool/result')
+        expect(JSON.stringify(toolResult)).toContain('closeoutAuthorization requires an existing runId')
+        expect(records.some(record => record.type === 'conductor/checkpoint')).toBe(false)
       },
     })
 

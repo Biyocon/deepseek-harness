@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   ConductorRunId,
+  closeRun,
   gateOfStage,
   nextStageAfterPass,
   recordGate,
@@ -13,6 +14,11 @@ function makeRun(overrides: Partial<ConductorRun> = {}): ConductorRun {
   return {
     runId: ConductorRunId('CON-2026-0001'),
     objective: 'ship the feature',
+    scope: [],
+    inputArtifacts: [],
+    allowedPaths: [],
+    excludedPaths: [],
+    sourceBaseline: null,
     authority: { owner: 'user', permittedActions: ['read'] },
     constraints: [],
     acceptanceCriteria: [],
@@ -20,6 +26,7 @@ function makeRun(overrides: Partial<ConductorRun> = {}): ConductorRun {
     baseline: null,
     currentStage: 'detective',
     history: [],
+    specialistReports: [],
     status: 'running',
     ...overrides,
   }
@@ -85,6 +92,7 @@ describe('dsh-conductor gate engine', () => {
     const next = recordGate(makeRun({ currentStage: 'arbiter' }), PASS)
     expect(next.currentStage).toBe('closeout')
     expect(next.history[0]).toMatchObject({ gate: 'G', decision: 'pass', nextStage: 'closeout' })
+    expect(next.status).toBe('awaiting_authorization')
   })
 
   it('records a rework within budget, routing to the target and counting the cycle', () => {
@@ -175,5 +183,50 @@ describe('dsh-conductor gate engine', () => {
     expect(run.history).toHaveLength(0)
     expect(run.currentStage).toBe('detective')
     expect(run.status).toBe('running')
+  })
+
+  it('requires explicit owner authority and records a traceable closeout without executing it', () => {
+    const run = makeRun({
+      authority: { owner: 'user', permittedActions: ['read', 'deploy'] },
+      currentStage: 'closeout',
+      status: 'awaiting_authorization',
+      decision: {
+        run_id: 'CON-2026-0001', decision: 'go', basis: ['verified'], evidence_reviewed: ['report'],
+        conditions: [], open_risks: [], required_follow_up: [],
+      },
+    })
+    const authorization = {
+      authorizedBy: 'user', action: 'deploy' as const, actionsTaken: ['deployed release 12'],
+      outcomeEvidence: ['deployment health check passed'], unverifiedItems: [], openRisks: [],
+      followUp: [{ owner: 'release-owner', dueCondition: 'next release window' }],
+      traceability: {
+        mandate: ['request'], baseline: ['abc120'], changes: ['abc123'],
+        verification: ['CI 42'], decision: ['Gate G'],
+      },
+    }
+    const closed = closeRun(run, authorization)
+    expect(closed.status).toBe('closed')
+    expect(closed.closeout).toMatchObject({
+      arbiter_decision: 'go', authorized_by: 'user', authorized_action: 'deploy',
+      actions_taken: ['deployed release 12'], follow_up: [{ owner: 'release-owner', due_condition: 'next release window' }],
+    })
+    expect(run.status).toBe('awaiting_authorization')
+  })
+
+  it('rejects closeout from the wrong owner or for an unauthorized action', () => {
+    const run = makeRun({
+      currentStage: 'closeout', status: 'awaiting_authorization',
+      decision: {
+        run_id: 'CON-2026-0001', decision: 'go', basis: [], evidence_reviewed: [],
+        conditions: [], open_risks: [], required_follow_up: [],
+      },
+    })
+    const authorization = {
+      authorizedBy: 'impostor', action: 'merge' as const, actionsTaken: [], outcomeEvidence: ['evidence'],
+      unverifiedItems: [], openRisks: [], followUp: [],
+      traceability: { mandate: [], baseline: [], changes: [], verification: [], decision: [] },
+    }
+    expect(() => closeRun(run, authorization)).toThrow(/mandate owner/)
+    expect(() => closeRun(run, { ...authorization, authorizedBy: 'user' })).toThrow(/outside the run authority/)
   })
 })

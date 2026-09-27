@@ -26,6 +26,10 @@ Før Detective køres, opret eller genoptag ét run med:
 ```yaml
 run_id: CON-YYYY-NNNN
 objective: <det ønskede resultat>
+scope: []
+input_artifacts: []
+allowed_paths: []
+excluded_paths: []
 authority:
   owner: <menneske eller Emperor>
   permitted_actions: [read]
@@ -34,10 +38,11 @@ acceptance_criteria: []
 budget:
   max_rework_cycles: 3
   max_ralph_rounds: 0
-stop_conditions: []
-baseline: null
+source_baseline: null
+execution_baseline: null
 current_stage: detective
 history: []
+specialist_reports: []
 ```
 
 Brug et eksisterende `run_id`, hvis der findes et uafsluttet run med samme mål. Genoptag kun fra sidste dokumenterede, gyldige gate; opfind ikke usete mellemresultater.
@@ -54,7 +59,7 @@ Manglende svar, der materielt ændrer mål eller myndighed, er en blocker og ska
 
 ## Kernestrøm og gates
 
-Kør kun de roller, som opgaven kræver, men bevar gate-ejerskabet hos Conductor.
+Runtime-kernestrømmen kører alle syv gatede roller. Bevar altid gate-ejerskabet hos Conductor.
 
 | Stage | Rolle | Minimumsleverance | Gate | Passerer til | Typisk rework |
 | --- | --- | --- | --- | --- | --- |
@@ -66,7 +71,7 @@ Kør kun de roller, som opgaven kræver, men bevar gate-ejerskabet hos Conductor
 | F | Integrator | komplet delivery package | Pakke komplet | Arbiter | Integrator eller relevant ejer |
 | G | Arbiter | beslutningsrecord | GO eller NO-GO | closeout eller rework | relevant ejer eller eskalering |
 
-Indsæt betingede domænespecialister under den relevante stage, eksempelvis sikkerhed, migrering eller compliance. De returnerer også til Conductor og er ikke permanente trin uden en konkret risikobegrundelse.
+Den nuværende runtime har ingen dynamiske ekstra stages. Et manuelt procesforløb kan bruge en afgrænset domænespecialist som input til en kernestage, men resultatet skal stadig returnere til Conductor og kan ikke eje en gate.
 
 ## Dispatch-pakke
 
@@ -76,21 +81,27 @@ Giv hver specialist en selvstændig, komplet pakke. Antag ikke, at child-agenten
 run_id: CON-YYYY-NNNN
 stage: <rolle>
 objective: <afgrænset opgave>
+scope: []
 input_artifacts: []
-approved_baseline: <version eller null>
-allowed_actions: [read]
-prohibited_actions: [write, publish]
+previous_specialist_reports: []
+source_baseline: <version eller null>
+execution_baseline: <Gate-C record eller null>
+allowed_paths: []
+excluded_paths: []
+allowed_actions: <stage allowlist intersected with authority, for eksempel [read, write]>
+prohibited_actions: [commit, push, merge, release, publish, deploy, shell, <alle handlinger afvist af stage eller authority>]
 acceptance_criteria: []
+constraints: []
 questions_to_resolve: []
 required_evidence: []
 return_format: conductor-specialist envelope
 ```
 
-Brug fresh spawn med eksplicit handoff til uafhængige reviews. Brug fork kun, når den afsluttede forældrekontekst er nødvendig og implicit kontekst er en bevidst valgt risiko.
+Brug fresh spawn med eksplicit handoff til uafhængige reviews. Brug fork kun, når den afsluttede forældrekontekst er nødvendig og implicit kontekst er en bevidst valgt risiko. En ukendt source-baseline er Detective-arbejde; execution-baselinen oprettes først efter Gate C.
 
 ## Baseline og ændringskontrol
 
-Efter Gate C opretter Conductor en immutable execution baseline med scope-, plan- og acceptance-versioner, tilladte områder, risici, eksklusioner og rollback-krav.
+Efter Gate C opretter Conductor en immutable execution baseline med scope-, plan- og acceptance-versioner, ejerautoriserede stier, eksklusioner og rollback-reference. Gate C må ikke udvide runnets `allowed_paths` eller fjerne `excluded_paths`.
 
 Hvis Headsman opdager et materielt afvigelsesbehov, stopper arbejdet ved grænsen og returnerer change request til Conductor. Conductor kan godkende en klart autoriseret, lille ændring eller route den til Strategist og Devil's Advocate. Udvid aldrig scope stiltiende.
 
@@ -101,6 +112,7 @@ Skeln specialistens `status` fra Conductorens beslutning. Registrér altid begge
 ```yaml
 run_id: CON-YYYY-NNNN
 gate: E
+stage: auditor
 decision: pass
 # pass | rework | escalate | abort
 basis: []

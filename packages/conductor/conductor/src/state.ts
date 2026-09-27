@@ -13,6 +13,8 @@
 import type {
   ConductorAuthority,
   ConductorBudget,
+  CloseoutAuthorization,
+  CloseoutRecord,
   ConductorRun,
   ConductorRunId,
   ConductorRunStatus,
@@ -30,6 +32,16 @@ import type {
 export interface CreateRunInput {
   /** The desired outcome. */
   objective: string
+  /** Files, components, or concerns included in the run. */
+  scope?: string[]
+  /** Artifacts supplied at intake. */
+  inputArtifacts?: string[]
+  /** Owner-authorized roots that write-capable stages may modify. */
+  allowedPaths?: string[]
+  /** Owner-declared roots excluded from every specialist write. */
+  excludedPaths?: string[]
+  /** Source state observed at intake, when already known. */
+  sourceBaseline?: string
   /** The mandate owner and permitted external actions. */
   authority: ConductorAuthority
   /** Non-negotiable constraints on the work. */
@@ -50,6 +62,11 @@ export function createRun(runId: ConductorRunId, input: CreateRunInput): Conduct
   return {
     runId,
     objective: input.objective,
+    scope: input.scope ?? [],
+    inputArtifacts: input.inputArtifacts ?? [],
+    allowedPaths: input.allowedPaths ?? [],
+    excludedPaths: input.excludedPaths ?? [],
+    sourceBaseline: input.sourceBaseline ?? null,
     authority: input.authority,
     constraints: input.constraints ?? [],
     acceptanceCriteria: input.acceptanceCriteria ?? [],
@@ -57,6 +74,7 @@ export function createRun(runId: ConductorRunId, input: CreateRunInput): Conduct
     baseline: null,
     currentStage: 'detective',
     history: [],
+    specialistReports: [],
     status: 'running',
   }
 }
@@ -214,7 +232,7 @@ export function recordGate(run: ConductorRun, verdict: GateVerdict): ConductorRu
   let status: ConductorRunStatus
   switch (decision) {
     case 'pass':
-      status = 'running'
+      status = gate === 'G' ? 'awaiting_authorization' : 'running'
       break
     case 'rework':
       status = 'rework'
@@ -246,10 +264,83 @@ export function recordGate(run: ConductorRun, verdict: GateVerdict): ConductorRu
 
   return {
     ...run,
+    ...decision === 'rework' && (verdict.defectClass === 'scope' || verdict.defectClass === 'plan')
+      ? { baseline: null }
+      : {},
     currentStage: nextStage ?? run.currentStage,
     status,
     history: [...run.history, record],
   }
+}
+
+/**
+ * Close a run after Gate G from an explicit mandate-owner authorization.
+ * This function records an already-authorized action and evidence; it never
+ * executes commit, push, merge, deploy, or any other external side effect.
+ * @param run - a GO run parked at closeout.
+ * @param authorization - explicit owner authorization and outcome evidence.
+ * @returns a new terminal run carrying its closeout record.
+ */
+export function closeRun(run: ConductorRun, authorization: CloseoutAuthorization): ConductorRun {
+  if (run.currentStage !== 'closeout' || run.status !== 'awaiting_authorization') {
+    throw new Error(`Conductor run ${run.runId} is not awaiting closeout authorization`)
+  }
+  if (run.decision?.decision !== 'go') {
+    throw new Error(`Conductor run ${run.runId} has no recorded Arbiter GO`)
+  }
+  if (authorization.authorizedBy !== run.authority.owner) {
+    throw new Error(`closeout authorization must come from mandate owner "${run.authority.owner}"`)
+  }
+  if (authorization.action !== 'record-only'
+    && !run.authority.permittedActions.includes(authorization.action)) {
+    throw new Error(`closeout action "${authorization.action}" is outside the run authority`)
+  }
+  if (authorization.outcomeEvidence.length === 0
+    || authorization.outcomeEvidence.some(item => item.length === 0 || item !== item.trim())) {
+    throw new Error('closeout authorization requires normalized outcome evidence')
+  }
+  const normalizedLists = [
+    authorization.actionsTaken,
+    authorization.unverifiedItems,
+    authorization.openRisks,
+    authorization.traceability.mandate,
+    authorization.traceability.baseline,
+    authorization.traceability.changes,
+    authorization.traceability.verification,
+    authorization.traceability.decision,
+  ]
+  if (normalizedLists.some(items => items.some(item => item.length === 0 || item !== item.trim()))) {
+    throw new Error('closeout authorization lists must contain normalized strings')
+  }
+  if (authorization.followUp.some(item => item.owner.length === 0
+    || item.owner !== item.owner.trim()
+    || item.dueCondition.length === 0
+    || item.dueCondition !== item.dueCondition.trim())) {
+    throw new Error('closeout follow-up requires a normalized owner and due condition')
+  }
+  const closeout: CloseoutRecord = {
+    run_id: run.runId,
+    arbiter_decision: 'go',
+    authorized_by: authorization.authorizedBy,
+    authorized_action: authorization.action,
+    actions_taken: [...authorization.actionsTaken],
+    outcome_evidence: [...authorization.outcomeEvidence],
+    unverified_items: [...authorization.unverifiedItems],
+    open_risks: [...authorization.openRisks],
+    follow_up: authorization.followUp.map(item => ({
+      owner: item.owner,
+      due_condition: item.dueCondition,
+    })),
+    traceability: {
+      mandate: [...authorization.traceability.mandate],
+      baseline: [...authorization.traceability.baseline],
+      changes: [...authorization.traceability.changes],
+      verification: [...authorization.traceability.verification],
+      decision: [...authorization.traceability.decision],
+    },
+    status: 'closed',
+  }
+  return { ...run, status: 'closed', closeout }
 }
 
 function assertNever(value: never): never {

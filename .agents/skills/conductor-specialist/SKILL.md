@@ -40,6 +40,8 @@ En domænespecialist bruger samme format og afgrænser sin vurdering til det bes
 ```yaml
 run_id: CON-YYYY-NNNN
 stage: <rolle>
+baseline_ref: <source- eller execution-baseline, som faktisk blev vurderet>
+source_baseline: <kun når en ready Detective etablerer manglende source-reference>
 status: ready
 # ready | rework | blocked | failed
 summary: <kort resultat>
@@ -62,4 +64,4 @@ recommended_transition:
 confidence: low | medium | high
 ```
 
-`ready` betyder kun, at specialistarbejdet er afleveringsklart. Det betyder ikke gate-pass eller frigivelsesgodkendelse. Gæt ikke på pass/fail, hvis evidensen er utilstrækkelig; brug `blocked` eller `rework` med forklaring.
+`ready` betyder kun, at specialistarbejdet er afleveringsklart. Det betyder ikke gate-pass eller frigivelsesgodkendelse. Udelad `source_baseline`, medmindre en ready Detective etablerer den source-reference, som manglede ved intake. En ready Devil's Advocate ved Gate C inkluderer desuden `execution_baseline` med `scopeVersion`, `planVersion`, `acceptanceVersion`, `allowedPaths`, `excludedPaths` og `rollbackReference`; andre stages udelader feltet. Gæt ikke på pass/fail, hvis evidensen er utilstrækkelig; brug `blocked` eller `rework` med forklaring.

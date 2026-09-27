@@ -14,22 +14,24 @@ import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import {
   ConductorRunId,
+  closeRun,
   createRun,
   drive,
-  InMemoryConductorRunStore,
   isValidRunId,
   mintRunId,
   resumeRun,
+  SessionConductorRunStore,
 } from '@deepseek-ai/dsh-conductor'
 import type {
   ConductorAction,
   ConductorAuthority,
   ConductorRun,
   ConductorStage,
+  CloseoutAuthorization,
   DecisionRecord,
   SpecialistEnvelope,
 } from '@deepseek-ai/dsh-conductor'
-import { toolRestrictionForStage } from './capability.ts'
+import { toolGuardForStage, toolRestrictionForStage } from './capability.ts'
 import { ralphDirective } from './ralph.ts'
 import { ROLE_SKILL } from '@deepseek-ai/dsh-conductor-presets'
 import type { Agent } from '@deepseek-ai/dsh-agent'
@@ -38,11 +40,13 @@ import type { JsonValue } from '@deepseek-ai/dsh-session'
 import type { SubagentProvider } from '@deepseek-ai/dsh-subagent'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { ObjectJsonSchema, ToolCallView, ToolResultView } from '@deepseek-ai/dsh-tools'
+import type { WorkflowResult, WorkflowRun } from '@deepseek-ai/dsh-workflow'
+import { runRalphWorkflow } from '@deepseek-ai/dsh-tool-ralph'
 // Declaration merge only: makes ctx.skills visible for the role-skill lookup.
 import type {} from '@deepseek-ai/dsh-skill'
 
 export const name = 'tool-conductor'
-export const inject = ['tools', 'subagents', 'skills']
+export const inject = ['tools', 'subagents', 'skills', 'sessions', 'workflowEngine']
 
 /** Deployment policy for the Conductor tool. */
 export interface Config {
@@ -52,6 +56,8 @@ export interface Config {
   maxReworkCycles?: number
   /** Default Ralph round budget; 0 disables the Headsman sub-phase (default 0). */
   maxRalphRounds?: number
+  /** Maximum serialized characters in one Ralph handoff (default 16384). */
+  maxRalphHandoffChars?: number
 }
 
 /** Schemastery configuration for the Conductor tool. */
@@ -59,23 +65,31 @@ export const Config: z<Config> = z.object({
   subagentProvider: z.string().default('spawn'),
   maxReworkCycles: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(3),
   maxRalphRounds: z.number().step(1).min(0).max(Number.MAX_SAFE_INTEGER).default(0),
+  maxRalphHandoffChars: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(16_384),
 })
 
 interface ResolvedConfig {
   readonly subagentProvider: string
   readonly maxReworkCycles: number
   readonly maxRalphRounds: number
+  readonly maxRalphHandoffChars: number
 }
 
 interface ConductorCallArgs {
   objective: string
+  scope?: string[]
+  inputArtifacts?: string[]
+  allowedPaths?: string[]
+  excludedPaths?: string[]
+  sourceBaseline?: string
   constraints?: string[]
   acceptanceCriteria?: string[]
   authority?: { owner: string; permittedActions: string[] }
   runId?: string
+  closeoutAuthorization?: CloseoutAuthorization
 }
 
-const VALID_ACTIONS = ['read', 'write', 'commit', 'push', 'merge'] as const
+const VALID_ACTIONS = ['read', 'write', 'commit', 'push', 'merge', 'release', 'publish', 'deploy'] as const
 
 const DESCRIPTION = 'Run a multi-role, gated Conductor workflow toward one objective. '
   + 'The tool drives Detective → Strategist → Devil\'s Advocate → Headsman → Auditor → Integrator → Arbiter, '
@@ -89,6 +103,8 @@ const ENVELOPE_SCHEMA = {
   properties: {
     run_id: { type: 'string' },
     stage: { type: 'string' },
+    baseline_ref: { type: 'string' },
+    source_baseline: { type: 'string' },
     status: { type: 'string', enum: ['ready', 'rework', 'blocked', 'failed'] },
     summary: { type: 'string' },
     evidence: {
@@ -134,6 +150,21 @@ const ENVELOPE_SCHEMA = {
         required: ['target', 'reason', 'impact'],
       },
     },
+    execution_baseline: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        scopeVersion: { type: 'string' },
+        planVersion: { type: 'string' },
+        acceptanceVersion: { type: 'string' },
+        allowedPaths: { type: 'array', items: { type: 'string' } },
+        excludedPaths: { type: 'array', items: { type: 'string' } },
+        rollbackReference: { type: 'string' },
+      },
+      required: [
+        'scopeVersion', 'planVersion', 'acceptanceVersion', 'allowedPaths', 'excludedPaths', 'rollbackReference',
+      ],
+    },
     recommended_transition: {
       type: 'object',
       additionalProperties: false,
@@ -146,7 +177,7 @@ const ENVELOPE_SCHEMA = {
     confidence: { type: 'string', enum: ['low', 'medium', 'high'] },
   },
   required: [
-    'run_id', 'stage', 'status', 'summary', 'evidence', 'findings', 'assumptions',
+    'run_id', 'stage', 'baseline_ref', 'status', 'summary', 'evidence', 'findings', 'assumptions',
     'blockers', 'artifacts', 'change_requests', 'recommended_transition', 'confidence',
   ],
 } satisfies ObjectJsonSchema
@@ -171,6 +202,7 @@ function resolveConfig(config: Config): ResolvedConfig {
   const subagentProvider = config.subagentProvider ?? 'spawn'
   const maxReworkCycles = config.maxReworkCycles ?? 3
   const maxRalphRounds = config.maxRalphRounds ?? 0
+  const maxRalphHandoffChars = config.maxRalphHandoffChars ?? 16_384
   if (subagentProvider.length === 0 || subagentProvider !== subagentProvider.trim()) {
     throw new TypeError('subagentProvider must be a non-empty normalized string')
   }
@@ -180,7 +212,10 @@ function resolveConfig(config: Config): ResolvedConfig {
   if (!Number.isSafeInteger(maxRalphRounds) || maxRalphRounds < 0) {
     throw new TypeError('maxRalphRounds must be a non-negative safe integer')
   }
-  return { subagentProvider, maxReworkCycles, maxRalphRounds }
+  if (!Number.isSafeInteger(maxRalphHandoffChars) || maxRalphHandoffChars < 1) {
+    throw new TypeError('maxRalphHandoffChars must be a positive safe integer')
+  }
+  return { subagentProvider, maxReworkCycles, maxRalphRounds, maxRalphHandoffChars }
 }
 
 /** Require a genuinely fresh structured-output provider for specialists. */
@@ -194,6 +229,12 @@ function requireFreshProvider(ctx: Context, name: string): SubagentProvider {
   }
   if (!provider.capabilities.toolFilter) {
     throw new Error(`Conductor subagent provider "${name}" does not support tool restrictions`)
+  }
+  if (!provider.capabilities.toolGuard) {
+    throw new Error(`Conductor subagent provider "${name}" does not support argument-aware tool guards`)
+  }
+  if (!provider.capabilities.persona) {
+    throw new Error(`Conductor subagent provider "${name}" does not support child personas`)
   }
   if (provider.inheritsParentContext) {
     throw new Error(`Conductor subagent provider "${name}" inherits parent context; Conductor requires a fresh provider`)
@@ -215,40 +256,137 @@ function resolveAuthority(value: ConductorCallArgs['authority']): ConductorAutho
   return { owner, permittedActions: actions as ConductorAction[] }
 }
 
+function resolvePathList(value: string[] | undefined, field: string): string[] {
+  const paths = value ?? []
+  if (paths.some(path => path.length === 0 || path !== path.trim())) {
+    throw new Error(`Conductor ${field} must contain only non-empty normalized paths`)
+  }
+  if (new Set(paths).size !== paths.length) throw new Error(`Conductor ${field} must not contain duplicates`)
+  return [...paths]
+}
+
+function resolveStringList(value: string[] | undefined, field: string): string[] {
+  const items = value ?? []
+  if (items.some(item => item.length === 0 || item !== item.trim())) {
+    throw new Error(`Conductor ${field} must contain only non-empty normalized strings`)
+  }
+  if (new Set(items).size !== items.length) throw new Error(`Conductor ${field} must not contain duplicates`)
+  return [...items]
+}
+
 /** Compose the specialist child prompt from the role skill body, the dispatch package, and an optional Ralph directive. */
 function composeSpecialistPrompt(
   stage: ConductorStage,
   run: ConductorRun,
-  roleBody: string | undefined,
-  ralphBody?: string,
+  ralphResult?: unknown,
 ): string {
+  const stageActions: ConductorAction[] = [
+    ...(run.authority.permittedActions.includes('read') ? ['read' as const] : []),
+    ...((stage === 'headsman' || stage === 'integrator') && run.authority.permittedActions.includes('write')
+      ? ['write' as const]
+      : []),
+  ]
   const parts = [
     'You are one specialist in a Conductor run. Work only on the dispatched stage, against the dispatch package below, and return exactly one structured result to the Conductor. You are a worker, not the workflow owner: never name the next specialist and never make a gate decision.',
-    'Specialist role:\n' + (roleBody ?? '(role body unavailable)'),
     'Dispatch package:\n' + JSON.stringify({
       run_id: run.runId,
       stage,
       objective: run.objective,
-      baseline: run.baseline,
-      allowed_actions: run.authority.permittedActions,
+      scope: run.scope,
+      previous_specialist_reports: run.specialistReports,
+      source_baseline: run.sourceBaseline,
+      execution_baseline: run.baseline,
+      allowed_paths: run.allowedPaths,
+      excluded_paths: run.excludedPaths,
+      allowed_actions: stageActions,
+      prohibited_actions: [...VALID_ACTIONS.filter(action => !stageActions.includes(action)), 'shell'],
       acceptance_criteria: run.acceptanceCriteria,
       constraints: run.constraints,
+      input_artifacts: run.inputArtifacts,
+      questions_to_resolve: [],
+      required_evidence: [],
     }, null, 2),
     'Return the structured result in exactly the fields the schema requires.',
   ]
-  if (ralphBody !== undefined) parts.push(ralphBody)
+  if (ralphResult !== undefined) {
+    parts.splice(parts.length - 1, 0,
+      `Headsman-internal Ralph result (not a gate decision):\n${JSON.stringify(ralphResult, null, 2)}`)
+  }
   return parts.join('\n\n')
 }
 
-/** Compose the Arbiter child prompt from the role skill body and the full gate history. */
-function composeArbiterPrompt(run: ConductorRun, roleBody: string | undefined): string {
+/** Compose the Arbiter child prompt from the complete delivery record and gate history. */
+function composeArbiterPrompt(run: ConductorRun): string {
   return [
     'You are The Arbiter in a Conductor run. Review the full gate history and delivery package, then return a GO/NO-GO decision. A GO never grants commit, push, merge, or deploy authority by itself.',
-    'Arbiter role:\n' + (roleBody ?? '(role body unavailable)'),
-    'Run and gate history:\n' + JSON.stringify({ run_id: run.runId, history: run.history }, null, 2),
+    'Run, specialist reports, and gate history:\n' + JSON.stringify({
+      run_id: run.runId,
+      source_baseline: run.sourceBaseline,
+      execution_baseline: run.baseline,
+      specialist_reports: run.specialistReports,
+      history: run.history,
+    }, null, 2),
     'Acceptance criteria:\n' + JSON.stringify(run.acceptanceCriteria, null, 2),
     'Return the DecisionRecord in exactly the fields the schema requires.',
   ].join('\n\n')
+}
+
+const SPECIALIST_WORKFLOW_META = {
+  name: 'conductor-specialist',
+  description: 'Run one fresh Conductor specialist through the workflow engine.',
+  phases: [{ title: 'Specialist', detail: 'One policy-scoped structured-output child.' }],
+}
+
+const SPECIALIST_WORKFLOW_SCRIPT = String.raw`
+phase('Specialist')
+return await agent(args.prompt, {
+  label: args.label,
+  schema: args.schema,
+})
+`
+
+/** Load one required scoped skill or fail the dispatch before a child starts. */
+async function requireSkill(ctx: Context, parent: Agent, signal: AbortSignal, name: string): Promise<string> {
+  const skill = await ctx.skills.get(name, {
+    scope: parent.ctx,
+    cwd: parent.session.header.cwd,
+    signal,
+  })
+  if (skill === undefined) throw new Error(`Conductor required skill "${name}" is unavailable`)
+  return skill.content
+}
+
+/** Run one fresh structured child through the existing workflow engine. */
+async function runWorkflowChild(
+  ctx: Context,
+  providerName: string,
+  parent: Agent,
+  signal: AbortSignal,
+  stage: ConductorStage,
+  run: ConductorRun,
+  prompt: string,
+  schema: ObjectJsonSchema,
+  persona: string,
+): Promise<unknown> {
+  const workflow: WorkflowRun = ctx.workflowEngine.start({
+    script: SPECIALIST_WORKFLOW_SCRIPT,
+    meta: SPECIALIST_WORKFLOW_META,
+    args: { prompt, label: `conductor-${stage}`, schema },
+    subagentProvider: providerName,
+    maxTotalAgents: 1,
+    parent,
+    signal,
+    childToolFilter: toolRestrictionForStage(stage, run.authority.permittedActions),
+    childToolGuard: toolGuardForStage(stage, run.baseline, run.authority.permittedActions),
+    childPersona: persona,
+  })
+  try {
+    const result: WorkflowResult = await workflow.result
+    if (result.stopReason !== 'completed') return undefined
+    return result.value
+  } finally {
+    await workflow.dispose()
+  }
 }
 
 /** Read one specialist's structured envelope across the subagent boundary. */
@@ -259,38 +397,58 @@ async function runSpecialist(
   signal: AbortSignal,
   stage: ConductorStage,
   run: ConductorRun,
+  maxRalphHandoffChars: number,
 ): Promise<SpecialistEnvelope> {
-  const role = await ctx.skills.get(ROLE_SKILL[stage] ?? '', { signal })
+  const roleName = ROLE_SKILL[stage]
+  if (roleName === undefined) throw new Error(`Conductor stage "${stage}" has no role skill`)
+  const [roleBody, specialistBody] = await Promise.all([
+    requireSkill(ctx, parent, signal, roleName),
+    requireSkill(ctx, parent, signal, 'conductor-specialist'),
+  ])
   let ralphBody: string | undefined
   if (stage === 'headsman') {
-    const ralphSkill = await ctx.skills.get('conductor-ralph', { signal })
-    ralphBody = ralphDirective(run.budget.maxRalphRounds, ralphSkill?.content)
+    const ralphSkill = run.budget.maxRalphRounds > 0
+      ? await requireSkill(ctx, parent, signal, 'conductor-ralph')
+      : undefined
+    ralphBody = ralphDirective(run.budget.maxRalphRounds, ralphSkill)
   }
-  const prompt: ContentBlock[] = [{ type: 'text', text: composeSpecialistPrompt(stage, run, role?.content, ralphBody) }]
-  const toolFilter = toolRestrictionForStage(stage)
-  const child = await ctx.subagents.start(providerName, {
-    prompt, parent, signal, outputSchema: ENVELOPE_SCHEMA,
-    ...toolFilter !== undefined ? { toolFilter } : {},
-  })
-  const result = await child.result
-  await child.dispose()
-  if (result.structured === undefined) {
+  const persona = [roleBody, specialistBody, ralphBody].filter(value => value !== undefined).join('\n\n')
+  const ralphOutcome = stage === 'headsman' && run.budget.maxRalphRounds > 0
+    ? await runRalphWorkflow(ctx, {
+      objective: `Implement the approved Conductor baseline for: ${run.objective}`,
+      maxRounds: run.budget.maxRalphRounds,
+      maxHandoffChars: maxRalphHandoffChars,
+      maxResultChars: maxRalphHandoffChars,
+      subagentProvider: providerName,
+      parent,
+      signal,
+      childToolFilter: toolRestrictionForStage(stage, run.authority.permittedActions),
+      childToolGuard: toolGuardForStage(stage, run.baseline, run.authority.permittedActions),
+      childPersona: persona,
+    })
+    : undefined
+  const structured = await runWorkflowChild(
+    ctx, providerName, parent, signal, stage, run,
+    composeSpecialistPrompt(stage, run, ralphOutcome?.result), ENVELOPE_SCHEMA, persona,
+  )
+  if (structured === undefined || structured === null) {
     return {
       run_id: run.runId,
       stage,
       status: 'failed',
-      summary: `specialist produced no structured envelope (${result.stopReason})`,
+      baseline_ref: run.baseline?.rollbackReference ?? run.sourceBaseline ?? 'unestablished',
+      summary: 'specialist produced no structured envelope',
       evidence: [],
       findings: [],
       assumptions: [],
-      blockers: [result.stopReason],
+      blockers: ['workflow child returned no structured value'],
       artifacts: [],
       change_requests: [],
       recommended_transition: { target: 'conductor', rationale: 'no structured output' },
       confidence: 'low',
     }
   }
-  return result.structured as SpecialistEnvelope
+  return structured as SpecialistEnvelope
 }
 
 /** Read the Arbiter's decision across the subagent boundary. */
@@ -301,31 +459,36 @@ async function runArbiter(
   signal: AbortSignal,
   run: ConductorRun,
 ): Promise<DecisionRecord> {
-  const role = await ctx.skills.get(ROLE_SKILL['arbiter'] ?? '', { signal })
-  const prompt: ContentBlock[] = [{ type: 'text', text: composeArbiterPrompt(run, role?.content) }]
-  const toolFilter = toolRestrictionForStage('arbiter')
-  const child = await ctx.subagents.start(providerName, {
-    prompt, parent, signal, outputSchema: DECISION_SCHEMA,
-    ...toolFilter !== undefined ? { toolFilter } : {},
-  })
-  const result = await child.result
-  await child.dispose()
-  if (result.structured === undefined) {
+  const arbiterRole = ROLE_SKILL['arbiter']
+  if (arbiterRole === undefined) throw new Error('Conductor Arbiter role skill mapping is unavailable')
+  const [roleBody, closeoutBody] = await Promise.all([
+    requireSkill(ctx, parent, signal, arbiterRole),
+    requireSkill(ctx, parent, signal, 'conductor-closeout'),
+  ])
+  const structured = await runWorkflowChild(
+    ctx, providerName, parent, signal, 'arbiter', run,
+    composeArbiterPrompt(run), DECISION_SCHEMA, `${roleBody}\n\n${closeoutBody}`,
+  )
+  if (structured === undefined || structured === null) {
     return {
       run_id: run.runId,
       decision: 'no-go',
       basis: ['arbiter produced no structured decision'],
       evidence_reviewed: [],
       conditions: [],
-      open_risks: [result.stopReason],
+      open_risks: ['workflow child returned no structured value'],
       required_follow_up: ['re-dispatch arbiter'],
     }
   }
-  return result.structured as DecisionRecord
+  return structured as DecisionRecord
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function sameOrderedStrings(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index])
 }
 
 /** Render the terminal outcome without presenting self-report as certification. */
@@ -335,6 +498,9 @@ function renderOutcome(value: unknown): string {
   }
   if (isRecord(value) && value['kind'] === 'blocked') {
     return `Conductor run blocked: ${String(value['blocker'])}`
+  }
+  if (isRecord(value) && value['kind'] === 'closeout') {
+    return `Conductor run closed.\nCloseout:\n${JSON.stringify(value['closeout'], null, 2)}`
   }
   return 'Conductor run returned an unknown outcome'
 }
@@ -350,7 +516,6 @@ function presentResult(_args: ConductorCallArgs, _result: { content: ContentBloc
 /** Register the Conductor tool and its gated specialist driver. */
 export function apply(ctx: Context, config: Config): void {
   const resolved = resolveConfig(config)
-  const store = new InMemoryConductorRunStore()
   requireFreshProvider(ctx, resolved.subagentProvider)
 
   ctx.tools.register(defineTool({
@@ -367,6 +532,30 @@ export function apply(ctx: Context, config: Config): void {
         items: { type: 'string' },
         description: 'Non-negotiable constraints on the work.',
       },
+      scope: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Files, components, or concerns included in the run.',
+      },
+      inputArtifacts: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Artifact paths or identifiers available to every specialist.',
+      },
+      allowedPaths: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Owner-authorized roots that write-capable stages may modify; omission authorizes no writes.',
+      },
+      excludedPaths: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Owner-declared roots excluded from every specialist write.',
+      },
+      sourceBaseline: {
+        type: 'string',
+        description: 'Optional source version or commit observed at intake; Detective establishes it when omitted.',
+      },
       acceptanceCriteria: {
         type: 'array',
         items: { type: 'string' },
@@ -379,11 +568,52 @@ export function apply(ctx: Context, config: Config): void {
           owner: { type: 'string', required: true },
           permittedActions: { type: 'array', items: { type: 'string' } },
         },
-        description: 'The mandate owner and permitted external actions (read/write/commit/push/merge).',
+        description: 'The mandate owner and permitted external actions (read/write/commit/push/merge/release/publish/deploy).',
       },
       runId: {
         type: 'string',
         description: 'Optional run id to resume an existing unfinished run.',
+      },
+      closeoutAuthorization: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          authorizedBy: { type: 'string', required: true },
+          action: {
+            type: 'string',
+            required: true,
+            enum: ['record-only', ...VALID_ACTIONS],
+          },
+          outcomeEvidence: { type: 'array', required: true, items: { type: 'string' } },
+          actionsTaken: { type: 'array', required: true, items: { type: 'string' } },
+          unverifiedItems: { type: 'array', required: true, items: { type: 'string' } },
+          openRisks: { type: 'array', required: true, items: { type: 'string' } },
+          followUp: {
+            type: 'array',
+            required: true,
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                owner: { type: 'string', required: true },
+                dueCondition: { type: 'string', required: true },
+              },
+            },
+          },
+          traceability: {
+            type: 'object',
+            required: true,
+            additionalProperties: false,
+            properties: {
+              mandate: { type: 'array', required: true, items: { type: 'string' } },
+              baseline: { type: 'array', required: true, items: { type: 'string' } },
+              changes: { type: 'array', required: true, items: { type: 'string' } },
+              verification: { type: 'array', required: true, items: { type: 'string' } },
+              decision: { type: 'array', required: true, items: { type: 'string' } },
+            },
+          },
+        },
+        description: 'Explicit owner authorization used only to close a prior Arbiter GO; Conductor records but never performs the action.',
       },
     },
     output: {
@@ -408,37 +638,90 @@ export function apply(ctx: Context, config: Config): void {
       const objective = call.objective.trim()
       if (objective.length === 0) throw new Error('Conductor objective must be a non-empty string')
       const authority = resolveAuthority(call.authority)
+      const allowedPaths = resolvePathList(call.allowedPaths, 'allowedPaths')
+      const excludedPaths = resolvePathList(call.excludedPaths, 'excludedPaths')
+      const store = new SessionConductorRunStore(parent.session, async () => {
+        const flushed = await ctx.sessions.flush(parent.session)
+        if (!flushed) throw new Error(`Conductor could not durably flush session ${parent.session.id}`)
+      })
 
       let run: ConductorRun
       if (call.runId !== undefined) {
         if (!isValidRunId(call.runId)) throw new Error(`Conductor runId "${call.runId}" is not a valid CON-YYYY-NNNN id`)
         run = await resumeRun(store, ConductorRunId(call.runId))
+        if (run.objective !== objective) throw new Error('Conductor resume objective does not match the persisted run')
+        if (run.authority.owner !== authority.owner
+          || run.authority.permittedActions.join('\0') !== authority.permittedActions.join('\0')) {
+          throw new Error('Conductor resume authority does not match the persisted run')
+        }
+        if (!sameOrderedStrings(run.allowedPaths, allowedPaths)) {
+          throw new Error('Conductor resume allowedPaths do not match the persisted run')
+        }
+        if (!sameOrderedStrings(run.excludedPaths, excludedPaths)) {
+          throw new Error('Conductor resume excludedPaths do not match the persisted run')
+        }
       } else {
+        if (call.closeoutAuthorization !== undefined) {
+          throw new Error('Conductor closeoutAuthorization requires an existing runId')
+        }
         let runId = mintRunId()
         for (let attempt = 0; attempt < 8 && (await store.load(runId)) !== undefined; attempt += 1) {
           runId = mintRunId()
         }
         run = createRun(runId, {
           objective,
+          scope: resolveStringList(call.scope, 'scope'),
+          inputArtifacts: resolveStringList(call.inputArtifacts, 'inputArtifacts'),
+          allowedPaths,
+          excludedPaths,
+          ...call.sourceBaseline !== undefined ? { sourceBaseline: call.sourceBaseline } : {},
           authority,
-          constraints: call.constraints ?? [],
-          acceptanceCriteria: call.acceptanceCriteria ?? [],
+          constraints: resolveStringList(call.constraints, 'constraints'),
+          acceptanceCriteria: resolveStringList(call.acceptanceCriteria, 'acceptanceCriteria'),
           budget: { maxReworkCycles: resolved.maxReworkCycles, maxRalphRounds: resolved.maxRalphRounds },
         })
         await store.save(run)
       }
 
+      if (run.currentStage === 'closeout') {
+        if (call.closeoutAuthorization === undefined) {
+          return {
+            runId: run.runId,
+            stage: run.currentStage,
+            status: run.status,
+            result: {
+              kind: 'blocked',
+              blocker: 'Arbiter GO recorded; explicit closeoutAuthorization is required to close the run',
+            } as unknown as JsonValue,
+          }
+        }
+        const closed = closeRun(run, call.closeoutAuthorization)
+        await store.save(closed)
+        return {
+          runId: closed.runId,
+          stage: closed.currentStage,
+          status: closed.status,
+          result: { kind: 'closeout', closeout: closed.closeout } as unknown as JsonValue,
+        }
+      }
+      if (call.closeoutAuthorization !== undefined) {
+        throw new Error('Conductor closeoutAuthorization is valid only after an Arbiter GO')
+      }
+
       const dispatcher = {
         async dispatchSpecialist(stage: ConductorStage, current: ConductorRun) {
-          return await runSpecialist(ctx, resolved.subagentProvider, parent, exec.signal, stage, current)
+          return await runSpecialist(
+            ctx, resolved.subagentProvider, parent, exec.signal, stage, current, resolved.maxRalphHandoffChars,
+          )
         },
         async dispatchArbiter(current: ConductorRun) {
           return await runArbiter(ctx, resolved.subagentProvider, parent, exec.signal, current)
         },
       }
 
-      const outcome = await drive(run, dispatcher)
-      await store.save(outcome.run)
+      const outcome = await drive(run, dispatcher, async (checkpoint) => {
+        await store.save(checkpoint)
+      })
 
       return {
         runId: outcome.run.runId,

@@ -35,10 +35,16 @@ describe('dsh-conductor-presets', () => {
     ])
   })
 
-  it('the preset mounts the tool and the isolated role loader', async () => {
+  it('ships a complete preset with filesystem, roles, workflow, and internal-Ralph Conductor composition', async () => {
     const content = await readFile(PRESET_PATH, 'utf8')
     expect(content).toContain("name: '@deepseek-ai/dsh-tool-conductor'")
     expect(content).toContain("name: '@deepseek-ai/dsh-skill-filesystem'")
+    expect(content).toContain("name: '@deepseek-ai/dsh-tool-fs'")
+    expect(content).toContain("name: '@deepseek-ai/dsh-tool-fs-search'")
+    expect(content).toContain("name: '@deepseek-ai/dsh-workflow-worker-thread'")
+    expect(content).not.toContain("name: '@deepseek-ai/dsh-tool-ralph'")
+    expect(content).toContain('maxRalphRounds: 3')
+    expect(content).toContain('workflowEngine: true')
     expect(content).toContain('includeDefaultRoots: false')
     expect(content).toContain(`- ${ROLE_DIR}`)
   })

@@ -177,6 +177,11 @@ class WorkerThreadWorkflowEngine extends WorkflowEngine {
       request.parent,
       init,
       subagentProvider,
+      {
+        ...request.childToolFilter !== undefined ? { toolFilter: request.childToolFilter } : {},
+        ...request.childToolGuard !== undefined ? { toolGuard: request.childToolGuard } : {},
+        ...request.childPersona !== undefined ? { persona: request.childPersona } : {},
+      },
       this.config.disposeGraceMs,
       {
         phase: (title) => { this.emitWorkflowEvent('workflow/phase', info, title) },

@@ -483,6 +483,7 @@ export class SubagentRuntime extends Service {
       { when: request.outputSchema !== undefined, cap: 'outputSchema' },
       { when: request.maxDepth !== undefined, cap: 'depthLimit' },
       { when: request.toolFilter !== undefined, cap: 'toolFilter' },
+      { when: request.toolGuard !== undefined, cap: 'toolGuard' },
       { when: request.persona !== undefined, cap: 'persona' },
     ]
     for (const { when, cap } of needs) {

@@ -13,13 +13,19 @@ function makeRun(overrides: Partial<ConductorRun> = {}): ConductorRun {
   return {
     runId: ConductorRunId('CON-2026-0001'),
     objective: 'ship the feature',
+    scope: [],
+    inputArtifacts: [],
+    allowedPaths: ['packages/conductor'],
+    excludedPaths: [],
+    sourceBaseline: null,
     authority: { owner: 'user', permittedActions: ['read'] },
     constraints: [],
-    acceptanceCriteria: [],
+    acceptanceCriteria: ['feature works'],
     budget: { maxReworkCycles: 3, maxRalphRounds: 0 },
     baseline: null,
     currentStage: 'detective',
     history: [],
+    specialistReports: [],
     status: 'running',
     ...overrides,
   }
@@ -29,9 +35,11 @@ function makeEnvelope(stage: ConductorStage): SpecialistEnvelope {
   return {
     run_id: 'CON-2026-0001',
     stage,
+    baseline_ref: 'HEAD',
+    ...stage === 'detective' ? { source_baseline: 'HEAD' } : {},
     status: 'ready',
     summary: 'done',
-    evidence: [],
+    evidence: [{ kind: 'test', reference: `${stage}-check`, outcome: 'passed' }],
     findings: [],
     assumptions: [],
     blockers: [],
@@ -39,6 +47,12 @@ function makeEnvelope(stage: ConductorStage): SpecialistEnvelope {
     change_requests: [],
     recommended_transition: { target: 'conductor', rationale: 'evaluate' },
     confidence: 'high',
+    ...stage === 'devils-advocate' ? {
+      execution_baseline: {
+        scopeVersion: 'scope-1', planVersion: 'plan-1', acceptanceVersion: 'accept-1',
+        allowedPaths: ['packages/conductor'], excludedPaths: [], rollbackReference: 'HEAD',
+      },
+    } : {},
   }
 }
 
@@ -77,9 +91,9 @@ describe('dsh-conductor gate invariants', () => {
     expect(outcome.kind).toBe('decision')
     if (outcome.kind !== 'decision') throw new Error('expected decision')
     expect(outcome.run.currentStage).toBe('closeout')
-    // Closeout records the decision, not a release: the run stays `running` until
+    // Closeout records the decision, not a release: the run stays awaiting authorization until
     // the authorized release action and its verification are recorded.
-    expect(outcome.run.status).toBe('running')
+    expect(outcome.run.status).toBe('awaiting_authorization')
     expect(outcome.run.history.at(-1)).toMatchObject({ gate: 'G', decision: 'pass' })
   })
 })

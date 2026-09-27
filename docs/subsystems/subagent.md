@@ -28,6 +28,7 @@ interface SubagentCapabilities {
   readonly outputSchema: boolean
   readonly depthLimit: boolean
   readonly toolFilter: boolean
+  readonly toolGuard?: boolean
   readonly persona: boolean
 }
 ```
@@ -85,6 +86,12 @@ interface SubagentStartRequest {
    * unknown-name validation.
    */
   readonly toolFilter?: ToolRestriction
+  /**
+   * Optional trusted host-side execution guard installed in the child's
+   * unpublished creation window. It is never model- or wire-supplied and is
+   * supported only by same-process providers that advertise `toolGuard`.
+   */
+  readonly toolGuard?: ToolGuard
   /**
    * Optional per-child persona. Requires {@link SubagentCapabilities.persona};
    * rejected at start otherwise. In-process backends register it as a scoped

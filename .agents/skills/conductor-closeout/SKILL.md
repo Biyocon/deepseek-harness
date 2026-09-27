@@ -26,9 +26,9 @@ required_follow_up: []
 ## Ved GO
 
 1. Bekræft at den konkrete release-, commit-, push-, merge-, publish- eller deploy-handling er autoriseret. GO erstatter ikke denne myndighed.
-2. Udfør kun de autoriserede handlinger.
+2. Lad den autoriserede aktør udføre handlingen uden for Conductor; Conductor udfører aldrig automatisk commit, push, merge, publish eller deploy.
 3. Verificér det faktiske outcome med frisk evidens på den relevante flade, eksempelvis remote revision, deployment health, publiceret artefakt eller acceptance smoke.
-4. Registrér handling, udfald, bevis, resterende risici og ejer af opfølgning.
+4. Registrér autorisation, handling, udfald, bevis, resterende risici og ejer af opfølgning.
 
 Hvis myndighed mangler, hold runnet på `awaiting_authorization`; gæt aldrig på brugerens hensigt.
 
@@ -36,15 +36,17 @@ Hvis myndighed mangler, hold runnet på `awaiting_authorization`; gæt aldrig p�
 
 ```yaml
 run_id: CON-YYYY-NNNN
-status: closed | awaiting_authorization | rework | escalated | aborted
-arbiter_decision: go | no-go
+status: closed
+arbiter_decision: go
+authorized_by: <mandate owner>
+authorized_action: record-only | read | write | commit | push | merge | release | publish | deploy
 actions_taken: []
 outcome_evidence: []
 unverified_items: []
 open_risks: []
 follow_up:
-  owner: <navn eller rolle>
-  due_condition: <hvad der udløser opfølgning>
+  - owner: <navn eller rolle>
+    due_condition: <hvad der udløser opfølgning>
 traceability:
   mandate: []
   baseline: []
@@ -53,4 +55,4 @@ traceability:
   decision: []
 ```
 
-Et run er kun `closed`, når den planlagte afslutningshandling, dens passende verifikation og den samlede record er til stede. Rapporter afgrænsede usikkerheder som `unverified_items`; kald ikke arbejdet komplet på deres vegne.
+Opret kun denne record efter GO og eksplicit autorisation. Ved NO-GO oprettes ingen closeout-record; ved manglende autorisation forbliver runnet `awaiting_authorization` uden closeout-record. Et run er kun `closed`, når den planlagte afslutningshandling, dens passende verifikation og den samlede record er til stede. Rapporter afgrænsede usikkerheder som `unverified_items`; kald ikke arbejdet komplet på deres vegne.

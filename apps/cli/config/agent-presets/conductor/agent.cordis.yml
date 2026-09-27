@@ -1,5 +1,29 @@
-# The `conductor` agent preset: the model-facing Conductor tool plus an
-# isolated provider for the specialist role skills.
+# The complete `conductor` agent preset. The parent receives the filesystem
+# tools needed to inspect and record a run; every specialist receives a stricter
+# stage policy from the Conductor runtime.
+
+- id: persona
+  name: '@deepseek-ai/dsh-persona'
+  config:
+    text: >-
+      You are The Conductor. Own workflow state and gate decisions, dispatch fresh specialists,
+      and never treat a specialist self-report as release authority.
+
+- id: instructions
+  name: '@deepseek-ai/dsh-agent-instructions'
+  config:
+    maxBytes: 65536
+
+- id: filesystem
+  name: '@deepseek-ai/dsh-tool-fs'
+
+- id: filesystem-search
+  name: '@deepseek-ai/dsh-tool-fs-search'
+  config:
+    sampleOverCapGlobResults: false
+
+- id: default-skills
+  name: '@deepseek-ai/dsh-skill-filesystem'
 
 # The specialist role files under `.agents/conductor/roles` load as skills here
 # (they carry frontmatter naming `conductor-*` and are not model-invocable; the
@@ -14,7 +38,22 @@
       - .agents/conductor/roles
     watch: false
 
-# The model-facing entry point that mints a run and drives the gated
-# specialist state machine; it reads the role skills above to compose each child.
-- id: tool-conductor
-  name: '@deepseek-ai/dsh-tool-conductor'
+# Workflow services are isolated as one composition because the consumers must
+# resolve the same engine instance as the worker-thread provider.
+- id: conductor-runtime
+  name: cordis:group
+  group: true
+  isolate:
+    workflowEngine: true
+  config:
+    - id: workflow-worker
+      name: '@deepseek-ai/dsh-workflow-worker-thread'
+      config:
+        provider: spawn
+    - id: tool-conductor
+      name: '@deepseek-ai/dsh-tool-conductor'
+      config:
+        subagentProvider: spawn
+        maxReworkCycles: 3
+        maxRalphRounds: 3
+        maxRalphHandoffChars: 16384

@@ -6,7 +6,7 @@ English | [中文](2026-09-11-conductor-runtime-layer.zh.md)
 
 ## Problem
 
-The Conductor process protocol already exists as four local skills — [`conductor-orchestration`](../../../.agents/skills/conductor-orchestration/SKILL.md), [`conductor-specialist`](../../../.agents/skills/conductor-specialist/SKILL.md), [`conductor-ralph`](../../../.agents/skills/conductor-ralph/SKILL.md), and [`conductor-closeout`](../../../.agents/skills/conductor-closeout/SKILL.md) — and the seven specialist role files live under [`.agents/conductor/roles/`](../../../.agents/conductor/README.md). Those assets are enough for disciplined manual or semi-manual agent work, but they are not a runtime. Today nothing in DeepSeek Harness automatically:
+The Conductor process protocol already exists as four local skills — [`conductor-orchestration`](../../../../.agents/skills/conductor-orchestration/SKILL.md), [`conductor-specialist`](../../../../.agents/skills/conductor-specialist/SKILL.md), [`conductor-ralph`](../../../../.agents/skills/conductor-ralph/SKILL.md), and [`conductor-closeout`](../../../../.agents/skills/conductor-closeout/SKILL.md) — and the seven specialist role files live under [`.agents/conductor/roles/`](../../../../.agents/conductor/README.md). Those assets are enough for disciplined manual or semi-manual agent work, but they are not a runtime. Today nothing in DeepSeek Harness automatically:
 
 - mints or resumes a durable `run_id`;
 - routes a specialist result through a gate decision;
@@ -17,7 +17,7 @@ The Conductor process protocol already exists as four local skills — [`conduct
 
 Without that runtime layer, the skills are a convention that the model may follow, not a guarantee the harness enforces. The gap is becoming visible because users now want to say "run this through Conductor" and have the gates, baseline, and rework happen automatically.
 
-## Proposal
+## Decision
 
 Build one Conductor workflow/runtime feature that uses the existing skills and role files as instructions, but implements state, gates, routing, and enforcement inside DeepSeek Harness. The feature has four concrete parts:
 
@@ -49,9 +49,14 @@ A run is durable state keyed by `run_id`. The minimal record is:
 interface ConductorRun {
   runId: string
   objective: string
+  scope: string[]
+  inputArtifacts: string[]
+  allowedPaths: string[]
+  excludedPaths: string[]
+  sourceBaseline: string | null
   authority: {
     owner: 'user' | 'emperor' | string
-    permittedActions: ('read' | 'write' | 'commit' | 'push' | 'merge')[]
+    permittedActions: ('read' | 'write' | 'commit' | 'push' | 'merge' | 'release' | 'publish' | 'deploy')[]
   }
   constraints: string[]
   acceptanceCriteria: string[]
@@ -69,6 +74,7 @@ interface ConductorRun {
   } | null
   currentStage: ConductorStage
   history: GateRecord[]
+  specialistReports: SpecialistEnvelope[]
   status: 'running' | 'awaiting_authorization' | 'rework' | 'escalated' | 'closed' | 'aborted'
 }
 
@@ -100,7 +106,7 @@ The runtime persists this record in the parent session log using existing sessio
 
 ### Stage routing
 
-The run advances through the gates in [`conductor-orchestration`](../../../.agents/skills/conductor-orchestration/SKILL.md):
+The run advances through the gates in [`conductor-orchestration`](../../../../.agents/skills/conductor-orchestration/SKILL.md):
 
 | Gate | Stage | Passes to | Rework target by defect class |
 |------|-------|-----------|-------------------------------|
@@ -118,43 +124,55 @@ The Conductor state machine is the only code that decides `nextStage`. A special
 
 Each specialist is a fresh `spawn` subagent with:
 
-- the corresponding role file from [`.agents/conductor/roles/`](../../../.agents/conductor/README.md) loaded as a per-child persona or injected as a skill body;
-- the [`conductor-specialist`](../../../.agents/skills/conductor-specialist/SKILL.md) skill injected so the child knows the envelope format;
+- the corresponding role file from [`.agents/conductor/roles/`](../../../../.agents/conductor/README.md) loaded as a per-child persona or injected as a skill body;
+- the [`conductor-specialist`](../../../../.agents/skills/conductor-specialist/SKILL.md) skill injected so the child knows the envelope format;
 - a tool restriction that matches the stage (read-only for Detective/Auditor/Arbiter; write restricted to `allowed_paths` for Headsman; no commit/push/merge for anyone);
-- an `outputSchema` that matches the structured envelope in [`conductor-specialist`](../../../.agents/skills/conductor-specialist/SKILL.md).
+- an `outputSchema` that matches the structured envelope in [`conductor-specialist`](../../../../.agents/skills/conductor-specialist/SKILL.md).
 
 The child receives a complete dispatch package (run_id, stage, objective, input artifacts, baseline, allowed actions, prohibited actions, acceptance criteria, questions to resolve, required evidence). It returns exactly one envelope.
 
 ### Ralph integration
 
-When Headsman needs iteration inside an approved baseline, the runtime uses the existing `ralph` tool under [`conductor-ralph`](../../../.agents/skills/conductor-ralph/SKILL.md) rules: `maxRalphRounds > 0`, scope fixed, no gate pass, fresh workers per round. The Ralph loop is a sub-phase of Headsman; when it reports `complete`, Headsman still produces the final `ImplementationReport` and the runtime routes to Auditor.
+When Headsman needs iteration inside an approved baseline, the runtime calls the shared internal `runRalphWorkflow` runner under [`conductor-ralph`](../../../../.agents/skills/conductor-ralph/SKILL.md) rules: `maxRalphRounds > 0`, scope fixed, no gate pass, fresh workers per round. The standalone `ralph` tool and Conductor reuse the same runner, but Conductor does not expose that tool to specialists. The Ralph loop is a sub-phase of Headsman; when it reports `complete`, Headsman still produces the final `ImplementationReport` and the runtime routes to Auditor.
 
 ### Arbiter and closeout
 
-Gate G is The Arbiter. The runtime loads [`07-the-arbiter.md`](../../../.agents/conductor/roles/07-the-arbiter.md) as the child persona, passes the full gate history and delivery package, and requires a `DecisionRecord` with `GO` or `NO-GO`. On `GO`, the runtime moves to the closeout stage and uses [`conductor-closeout`](../../../.agents/skills/conductor-closeout/SKILL.md) to record the actual release action, its authorization, and outcome evidence. A `GO` does not itself perform a commit, push, merge, or deploy; those require explicit action permissions.
+Gate G is The Arbiter. The runtime loads [`07-the-arbiter.md`](../../../../.agents/conductor/roles/07-the-arbiter.md) as the child persona, passes the full gate history and delivery package, and requires a `DecisionRecord` with `GO` or `NO-GO`. On `GO`, the runtime moves to the closeout stage and uses [`conductor-closeout`](../../../../.agents/skills/conductor-closeout/SKILL.md) to record the actual release action, its authorization, and outcome evidence. A `GO` does not itself perform a commit, push, merge, or deploy; those require explicit action permissions.
 
 ### Files shipped
 
 - `packages/conductor/conductor/src/types.ts`, `state.ts`, `persistence.ts`, `routing.ts`, `run-id.ts`, `drive.ts` — run/gate vocabulary, state machine, persistence/resume, routing, run-id minting, and the dispatch driver.
-- `packages/conductor/tool-conductor/src/index.ts`, `capability.ts`, `ralph.ts` — the model-facing `conductor` tool, the per-stage tool restrictions, and the Headsman Ralph directive.
+- `packages/conductor/tool-conductor/src/index.ts`, `capability.ts`, `ralph.ts` — the model-facing `conductor` tool, per-stage executor restrictions, and Headsman integration with the shared Ralph runner owned by `packages/workflow/tool-ralph`.
 - `packages/conductor/conductor-presets/src/index.ts` — the specialist role-skill metadata.
 - `apps/cli/config/agent-presets/conductor/agent.cordis.yml` — preset that mounts the role loader (an isolated `skill-filesystem`) and the tool.
-- `.agents/conductor/roles/*.md` — the seven specialist role files, now carrying `conductor-*` skill frontmatter.
+- `.agents/conductor/roles/*.md` and `.agents/conductor/templates/*.md` — the seven specialist role files and the operational run, dispatch, envelope, gate, baseline, and closeout templates.
 - `scripts/gen-tool-catalog.ts` — registers `@deepseek-ai/dsh-tool-conductor`; `docs/tool-catalog.md` and `docs/config-catalog.md` regenerated.
 
 Tests:
 
 - `packages/conductor/conductor/tests/`, `packages/conductor/tool-conductor/tests/`, `packages/conductor/conductor-presets/tests/` — unit tests for gate routing, rework mapping, resume, envelope validation, capability policies, Ralph directive, and preset wiring.
-- `packages/conductor/tool-conductor/tests/integration.spec.ts` — a real-composition test that drives all seven specialists as fresh spawn children against a scripted model and returns the Arbiter's GO decision.
+- `packages/conductor/tool-conductor/tests/integration.spec.ts` — a real-composition test that drives all seven specialists plus a bounded Ralph worker as fresh spawn children against a scripted model and returns the Arbiter's GO decision.
+- `examples/headless-agent/tests/headless.snapshot.ts` — a keyless assembled-app snapshot that proves closeout authorization without an existing run id is rejected without persisting a checkpoint.
 
 ### Schema for the specialist envelope
 
-The runtime enforces a subset of the envelope described in [`conductor-specialist`](../../../.agents/skills/conductor-specialist/SKILL.md):
+The runtime enforces a subset of the envelope described in [`conductor-specialist`](../../../../.agents/skills/conductor-specialist/SKILL.md):
 
 ```ts
+interface ExecutionBaseline {
+  scopeVersion: string
+  planVersion: string
+  acceptanceVersion: string
+  allowedPaths: string[]
+  excludedPaths: string[]
+  rollbackReference: string
+}
+
 interface SpecialistEnvelope {
   run_id: string
   stage: string
+  baseline_ref: string
+  source_baseline?: string
   status: 'ready' | 'rework' | 'blocked' | 'failed'
   summary: string
   evidence: Array<{
@@ -176,6 +194,7 @@ interface SpecialistEnvelope {
     reason: string
     impact: string
   }>
+  execution_baseline?: ExecutionBaseline
   recommended_transition: {
     target: 'conductor'
     rationale: string
@@ -190,7 +209,7 @@ A missing or malformed envelope is a `blocked` result, not a silent pass.
 
 ### 1. Keep Conductor as prompt-only skills
 
-This is the current state. It works for manual use but cannot enforce gates, state, or capability separation. Rejected because the user explicitly asked for a runtime implementation.
+This was the prior prompt-only state. It worked for manual use but could not enforce gates, state, or capability separation. Rejected because the user explicitly asked for a runtime implementation.
 
 ### 2. Build a standalone Conductor orchestrator outside DeepSeek Harness
 
@@ -204,28 +223,29 @@ A large JavaScript workflow could encode the state machine inside `packages/work
 
 Instead of dispatching to role files inside one Conductor run, create a separate preset for Detective, Strategist, etc. That matches the original Conductor architecture more literally but multiplies preset management and makes gate routing harder to centralize. Rejected in favor of one Conductor preset/tool that loads the right role file per stage.
 
-## Acceptance criteria
+## Consequences
 
-1. A user can say "run this through Conductor" and the runtime creates a `run_id`, runs Detective → Strategist → Devil's Advocate → Headsman → Auditor → Integrator → Arbiter, and records every gate decision.
-2. Every specialist child is a fresh `spawn` subagent with the matching role file/skill, a tool restriction matching the stage, and the structured-output envelope schema.
-3. The runtime rejects malformed envelopes, routes `rework` to the correct stage by defect class, and escalates on missing authority.
-4. A run can resume from the last documented gate after a crash or cancellation.
-5. `ralph` may be used only inside Headsman with a bounded round count and a fixed baseline; the runtime still sends the result to an independent Auditor.
-6. Arbiter's `GO` moves to closeout; closeout records the authorized action, its evidence, and any unverified items. No `GO` automatically commits, pushes, merges, or deploys.
-7. `pnpm run test -t conductor` and the relevant snapshot gates pass before merge.
-8. An Agent Note updates this file to `Status: implemented` and adds a `## Verification` section when the feature ships.
+Conductor now adds a higher-level policy layer without changing the generic workflow script language. That keeps reusable orchestration in `packages/workflow`, but the Conductor tool must translate every stage into a trusted per-run child composition and maintain its own durable gate record.
+
+Every gate checkpoint enlarges the parent Session log with one whole-run snapshot. Resume is deterministic and does not need process memory, at the cost of repeated serialized history and a linear fold over that session's Conductor checkpoints.
+
+Write-capable specialists lose shell access and use canonical path guards on filesystem write/edit tools. This makes the in-process executor enforce the Conductor policy, while deployments that later add another mutation tool must add that tool and its argument extraction to the policy before exposing it to Headsman or Integrator.
+
+Arbiter GO and closeout are deliberately separate calls. The additional authorization round trip prevents a gate decision from becoming a commit, push, merge, or deployment action and leaves the external actor responsible for the action whose evidence Conductor records.
 
 ## Verification
 
-- `pnpm exec vitest run -t conductor` — 53 tests pass across the state machine/gate engine, persistence/resume, routing/rework, run-id, drive, capability policies, Ralph directive, preset wiring, and the real-composition test.
+- `pnpm run test -t conductor` — 71 tests pass across the state machine/gate engine, session-log persistence/resume, routing/rework, run-id, drive, capability policies, Ralph integration, preset wiring, and the real-composition/closeout test.
 - `pnpm run typecheck` — passes (host + client aggregates).
-- The real-composition test boots the real spawn stack and drives Detective → Strategist → Devil's Advocate → Headsman → Auditor → Integrator → Arbiter, each as a fresh structured-output child, returning the Arbiter's GO decision.
-- `pnpm run doc-sync` is clean for the Conductor surface (tool catalog, config catalog, markdown wrap, translation pairing, package paths). The remaining gate failures are unrelated pre-existing workspace debt (Biyocon UI rebrand, a stale connections-ux note, generated oxlint-contract probes, and `temp/` i18n pairs).
+- `pnpm run test:snapshot -t Conductor` — the keyless Conductor closeout-authorization snapshot passes through the assembled one-shot application.
+- The real-composition test boots the real spawn/workflow stack, drives Detective → Strategist → Devil's Advocate → Headsman → Auditor → Integrator → Arbiter as fresh structured-output children, persists the GO checkpoint, and records an explicitly authorized record-only closeout.
+- `pnpm run doc-sync` passes 26 of 28 gates and is clean for the Conductor surface. The remaining failures are broken links and a missing pairing record in the unrelated untracked connections note plus missing bilingual pairs inside the unrelated untracked `temp/` trees.
+- `pnpm run lint` completes the repository build and then fails only on missing `bun-types` in the unrelated untracked `temp/oh-my-openagent-dev` tree; the repository lint runner passes all 36 changed TypeScript files.
 
 ## Risks
 
 - **Prompt engineering risk**: the runtime can enforce tool restrictions and schemas, but the model still has to follow the role instructions. If the role files are too vague, the runtime will produce clean envelopes with poor decisions. Mitigation: keep role files short and precise; add keyless snapshot tests for representative Conductor runs.
 - **Scope creep into general workflow engine**: Conductor could become the only way to run multi-agent work, making the generic workflow tool feel second-class. Mitigation: keep the workflow tool general; Conductor is one higher-level product built on top of it.
-- **State persistence complexity**: session-log events are durable but querying them for resume is not free. Mitigation: store the latest gate and run summary in a small host-side key-value record keyed by `run_id`, with the full history in the session log.
-- **Capability-policy gaps**: tool restrictions limit which tools a child sees, but they do not change the underlying OS user's permissions. A child can still write outside `allowed_paths` through raw shell. Mitigation: combine tool restrictions with filesystem policy and landlock where available; document that Conductor's guarantees are runtime-level, not kernel-level.
+- **State persistence complexity**: session-log events are durable but querying them for resume is not free. Mitigation: the store scans newest-first by `run_id`; a projection can replace that fold if checkpoint volume becomes material.
+- **Capability-policy extension risk**: the current policy denies shell and guards `write`/`edit`, but a future mutation tool would need an explicit allowlist and argument-aware rule. Mitigation: fail closed at the stage allowlist and require an executor-denial test for every added mutation tool.
 - **Ralph double-use**: if the runtime offers both a Conductor Ralph path and the standalone `ralph` tool, users may confuse them. Mitigation: the standalone tool remains for explicit fresh-agent iteration; Conductor Ralph is an internal Headsman primitive and is not exposed as a top-level command.

@@ -2378,7 +2378,7 @@ export interface Config {
 
 ## `@deepseek-ai/dsh-tool-conductor`
 
-需要：`tools` · `subagents` · `skills`
+需要：`tools` · `subagents` · `skills` · `sessions` · `workflowEngine`
 
 ```ts config-catalog
 /** Deployment policy for the Conductor tool. */
@@ -2389,10 +2389,12 @@ export interface Config {
   maxReworkCycles?: number
   /** Default Ralph round budget; 0 disables the Headsman sub-phase (default 0). */
   maxRalphRounds?: number
+  /** Maximum serialized characters in one Ralph handoff (default 16384). */
+  maxRalphHandoffChars?: number
 }
 ```
 
-来源：[`packages/conductor/tool-conductor/src/index.ts:48`](../packages/conductor/tool-conductor/src/index.ts)
+来源：[`packages/conductor/tool-conductor/src/index.ts:52`](../packages/conductor/tool-conductor/src/index.ts)
 
 <a id="deepseek-aidsh-tool-fs"></a>
 

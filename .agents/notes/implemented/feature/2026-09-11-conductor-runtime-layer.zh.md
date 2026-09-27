@@ -6,7 +6,7 @@ Status: implemented
 
 ## Problem
 
-Conductor 流程协议已经以四个本地 skill 的形式存在：[`conductor-orchestration`](../../../.agents/skills/conductor-orchestration/SKILL.md)、[`conductor-specialist`](../../../.agents/skills/conductor-specialist/SKILL.md)、[`conductor-ralph`](../../../.agents/skills/conductor-ralph/SKILL.md) 和 [`conductor-closeout`](../../../.agents/skills/conductor-closeout/SKILL.md)；七个专家角色文件位于 [`.agents/conductor/roles/`](../../../.agents/conductor/README.md)。这些资产足以支持有纪律的手动或半自动 agent 工作，但它们还不是 runtime。目前在 DeepSeek Harness 中，没有任何东西能够自动：
+Conductor 流程协议已经以四个本地 skill 的形式存在：[`conductor-orchestration`](../../../../.agents/skills/conductor-orchestration/SKILL.md)、[`conductor-specialist`](../../../../.agents/skills/conductor-specialist/SKILL.md)、[`conductor-ralph`](../../../../.agents/skills/conductor-ralph/SKILL.md) 和 [`conductor-closeout`](../../../../.agents/skills/conductor-closeout/SKILL.md)；七个专家角色文件位于 [`.agents/conductor/roles/`](../../../../.agents/conductor/README.md)。这些资产足以支持有纪律的手动或半自动 agent 工作，但它们还不是 runtime。目前在 DeepSeek Harness 中，没有任何东西能够自动：
 
 - 生成或恢复持久的 `run_id`；
 - 将专家结果通过 gate 决策进行路由；
@@ -17,7 +17,7 @@ Conductor 流程协议已经以四个本地 skill 的形式存在：[`conductor-
 
 没有 runtime 层，这些 skill 只是模型可能遵循的约定，而不是 harness 强制执行的保证。这个缺口变得越来越明显，因为用户现在希望说出“通过 Conductor 运行这个”，并让 gate、baseline 和 rework 自动发生。
 
-## Proposal
+## Decision
 
 构建一个 Conductor workflow/runtime 功能，使用现有 skill 和角色文件作为指令，但在 DeepSeek Harness 内部实现状态、gate、路由和执行。该功能有四个具体部分：
 
@@ -49,9 +49,14 @@ Run 是按 `run_id` 索引的持久状态。最小记录为：
 interface ConductorRun {
   runId: string
   objective: string
+  scope: string[]
+  inputArtifacts: string[]
+  allowedPaths: string[]
+  excludedPaths: string[]
+  sourceBaseline: string | null
   authority: {
     owner: 'user' | 'emperor' | string
-    permittedActions: ('read' | 'write' | 'commit' | 'push' | 'merge')[]
+    permittedActions: ('read' | 'write' | 'commit' | 'push' | 'merge' | 'release' | 'publish' | 'deploy')[]
   }
   constraints: string[]
   acceptanceCriteria: string[]
@@ -69,6 +74,7 @@ interface ConductorRun {
   } | null
   currentStage: ConductorStage
   history: GateRecord[]
+  specialistReports: SpecialistEnvelope[]
   status: 'running' | 'awaiting_authorization' | 'rework' | 'escalated' | 'closed' | 'aborted'
 }
 
@@ -100,7 +106,7 @@ Runtime 在父 session log 中使用现有 session 事件持久化此记录，�
 
 ### Stage 路由
 
-Run 按照 [`conductor-orchestration`](../../../.agents/skills/conductor-orchestration/SKILL.md) 中的 gate 前进：
+Run 按照 [`conductor-orchestration`](../../../../.agents/skills/conductor-orchestration/SKILL.md) 中的 gate 前进：
 
 | Gate | Stage | Passes to | 按缺陷类别的 rework 目标 |
 |------|-------|-----------|--------------------------|
@@ -118,43 +124,55 @@ Conductor 状态机是决定 `nextStage` 的唯一代码。专家结果只携带
 
 每个专家都是一个全新的 `spawn` 子 agent，具有：
 
-- 从 [`.agents/conductor/roles/`](../../../.agents/conductor/README.md) 加载的对应角色文件作为 per-child persona 或作为 skill body 注入；
-- 注入的 [`conductor-specialist`](../../../.agents/skills/conductor-specialist/SKILL.md) skill，让子 agent 知道 envelope 格式；
+- 从 [`.agents/conductor/roles/`](../../../../.agents/conductor/README.md) 加载的对应角色文件作为 per-child persona 或作为 skill body 注入；
+- 注入的 [`conductor-specialist`](../../../../.agents/skills/conductor-specialist/SKILL.md) skill，让子 agent 知道 envelope 格式；
 - 匹配 stage 的工具限制（Detective/Auditor/Arbiter 只读；Headsman 写入限制在 `allowed_paths`；任何人都没有 commit/push/merge 权限）；
-- 与 [`conductor-specialist`](../../../.agents/skills/conductor-specialist/SKILL.md) 中结构化 envelope 匹配的 `outputSchema`。
+- 与 [`conductor-specialist`](../../../../.agents/skills/conductor-specialist/SKILL.md) 中结构化 envelope 匹配的 `outputSchema`。
 
 子 agent 收到完整的分发包（run_id、stage、objective、input artifacts、baseline、允许的操作、禁止的操作、acceptance criteria、待解决的问题、required evidence）。它只返回一个 envelope。
 
 ### Ralph 集成
 
-当 Headsman 需要在已批准的 baseline 内迭代时，runtime 在 [`conductor-ralph`](../../../.agents/skills/conductor-ralph/SKILL.md) 规则下使用现有的 `ralph` 工具：`maxRalphRounds > 0`、scope 固定、不通过 gate、每轮 fresh workers。Ralph 循环是 Headsman 的子阶段；当它报告 `complete` 时，Headsman 仍然生成最终的 `ImplementationReport`，然后 runtime 路由到 Auditor。
+当 Headsman 需要在已批准的 baseline 内迭代时，runtime 在 [`conductor-ralph`](../../../../.agents/skills/conductor-ralph/SKILL.md) 规则下调用共享的内部 `runRalphWorkflow` runner：`maxRalphRounds > 0`、scope 固定、不通过 gate、每轮 fresh workers。独立的 `ralph` 工具与 Conductor 复用同一 runner，但 Conductor 不向专家暴露该工具。Ralph 循环是 Headsman 的子阶段；当它报告 `complete` 时，Headsman 仍然生成最终的 `ImplementationReport`，然后 runtime 路由到 Auditor。
 
 ### Arbiter 与 closeout
 
-Gate G 是 The Arbiter。Runtime 加载 [`07-the-arbiter.md`](../../../.agents/conductor/roles/07-the-arbiter.md) 作为子 agent persona，传递完整的 gate 历史和 delivery package，并要求返回带有 `GO` 或 `NO-GO` 的 `DecisionRecord`。在 `GO` 时，runtime 进入 closeout stage 并使用 [`conductor-closeout`](../../../.agents/skills/conductor-closeout/SKILL.md) 记录实际的 release 操作、其授权和 outcome evidence。`GO` 本身不会执行 commit、push、merge 或 deploy；这些需要明确的操作权限。
+Gate G 是 The Arbiter。Runtime 加载 [`07-the-arbiter.md`](../../../../.agents/conductor/roles/07-the-arbiter.md) 作为子 agent persona，传递完整的 gate 历史和 delivery package，并要求返回带有 `GO` 或 `NO-GO` 的 `DecisionRecord`。在 `GO` 时，runtime 进入 closeout stage 并使用 [`conductor-closeout`](../../../../.agents/skills/conductor-closeout/SKILL.md) 记录实际的 release 操作、其授权和 outcome evidence。`GO` 本身不会执行 commit、push、merge 或 deploy；这些需要明确的操作权限。
 
 ### 已交付的文件
 
 - `packages/conductor/conductor/src/types.ts`、`state.ts`、`persistence.ts`、`routing.ts`、`run-id.ts`、`drive.ts` — run/gate 词汇、状态机、持久化/恢复、路由、run-id 生成以及分发驱动。
-- `packages/conductor/tool-conductor/src/index.ts`、`capability.ts`、`ralph.ts` — 面向模型的 `conductor` 工具、按 stage 的工具限制，以及 Headsman Ralph 指令。
+- `packages/conductor/tool-conductor/src/index.ts`、`capability.ts`、`ralph.ts` — 面向模型的 `conductor` 工具、按 stage 的 executor 限制，以及与 `packages/workflow/tool-ralph` 所拥有的共享 Ralph runner 的 Headsman 集成。
 - `packages/conductor/conductor-presets/src/index.ts` — 专家角色 skill 元数据。
 - `apps/cli/config/agent-presets/conductor/agent.cordis.yml` — 挂载角色 loader（隔离的 `skill-filesystem`）和工具的 preset。
-- `.agents/conductor/roles/*.md` — 七个专家角色文件，现在带有 `conductor-*` skill frontmatter。
+- `.agents/conductor/roles/*.md` 和 `.agents/conductor/templates/*.md` — 七个专家角色文件，以及 run、dispatch、envelope、gate、baseline 和 closeout 的操作模板。
 - `scripts/gen-tool-catalog.ts` — 注册 `@deepseek-ai/dsh-tool-conductor`；`docs/tool-catalog.md` 和 `docs/config-catalog.md` 已重新生成。
 
 测试：
 
 - `packages/conductor/conductor/tests/`、`packages/conductor/tool-conductor/tests/`、`packages/conductor/conductor-presets/tests/` — gate 路由、rework 映射、恢复、envelope 验证、能力策略、Ralph 指令和 preset 接线的单元测试。
-- `packages/conductor/tool-conductor/tests/integration.spec.ts` — 一个真实组合测试，驱动全部七个专家作为全新 spawn 子 agent，返回 Arbiter 的 GO 决策。
+- `packages/conductor/tool-conductor/tests/integration.spec.ts` — 一个真实组合测试，驱动全部七个专家和一个有界 Ralph worker 作为全新 spawn 子 agent，返回 Arbiter 的 GO 决策。
+- `examples/headless-agent/tests/headless.snapshot.ts` — 一个 keyless assembled-app snapshot，证明没有现有 run id 的 closeout authorization 会被拒绝且不会持久化 checkpoint。
 
 ### 专家 envelope 的 schema
 
-Runtime 强制执行 [`conductor-specialist`](../../../.agents/skills/conductor-specialist/SKILL.md) 中描述 envelope 的一个子集：
+Runtime 强制执行 [`conductor-specialist`](../../../../.agents/skills/conductor-specialist/SKILL.md) 中描述 envelope 的一个子集：
 
 ```ts
+interface ExecutionBaseline {
+  scopeVersion: string
+  planVersion: string
+  acceptanceVersion: string
+  allowedPaths: string[]
+  excludedPaths: string[]
+  rollbackReference: string
+}
+
 interface SpecialistEnvelope {
   run_id: string
   stage: string
+  baseline_ref: string
+  source_baseline?: string
   status: 'ready' | 'rework' | 'blocked' | 'failed'
   summary: string
   evidence: Array<{
@@ -176,6 +194,7 @@ interface SpecialistEnvelope {
     reason: string
     impact: string
   }>
+  execution_baseline?: ExecutionBaseline
   recommended_transition: {
     target: 'conductor'
     rationale: string
@@ -190,7 +209,7 @@ interface SpecialistEnvelope {
 
 ### 1. 仅将 Conductor 保留为基于 prompt 的 skill
 
-这是当前状态。它适用于手动使用，但无法强制执行 gate、状态或能力隔离。因为用户明确要求 runtime 实现，所以拒绝。
+这是之前仅基于 prompt 的状态。它适用于手动使用，但无法强制执行 gate、状态或能力隔离。因为用户明确要求 runtime 实现，所以拒绝。
 
 ### 2. 在 DeepSeek Harness 之外构建独立的 Conductor 编排器
 
@@ -204,28 +223,29 @@ interface SpecialistEnvelope {
 
 不是在一个 Conductor run 中分发到角色文件，而是为 Detective、Strategist 等创建单独的 preset。这更字面地符合原始 Conductor 架构，但增加了 preset 管理负担，并使 gate 路由更难集中。拒绝，选择一个 Conductor preset/tool，按 stage 加载正确的角色文件。
 
-## Acceptance criteria
+## Consequences
 
-1. 用户可以说“通过 Conductor 运行这个”，runtime 会创建 `run_id`，运行 Detective → Strategist → Devil's Advocate → Headsman → Auditor → Integrator → Arbiter，并记录每个 gate 决策。
-2. 每个专家子 agent 都是全新的 `spawn` subagent，带有匹配的角色文件/skill、匹配 stage 的工具限制，以及结构化输出 envelope schema。
-3. Runtime 拒绝格式错误的 envelope，按缺陷类别将 `rework` 路由到正确的 stage，并在缺少授权时升级。
-4. Run 可以在崩溃或取消后从最后记录的 gate 恢复。
-5. `ralph` 只能在 Headsman 内部使用，具有 bound 的 round count 和固定的 baseline；runtime 仍然将结果发送给独立的 Auditor。
-6. Arbiter 的 `GO` 进入 closeout；closeout 记录授权操作、其证据和任何未验证项目。任何 `GO` 都不会自动 commit、push、merge 或 deploy。
-7. 在合并前，`pnpm run test -t conductor` 和相关 snapshot gate 通过。
-8. 功能 ship 时，Agent Note 将此文件更新为 `Status: implemented` 并添加 `## Verification` 部分。
+Conductor 现在增加一个高层 policy layer，而不修改通用 workflow script language。这样可复用编排仍留在 `packages/workflow`，但 Conductor tool 必须把每个 stage 转换为可信的 per-run child composition，并维护自己的持久 gate record。
+
+每个 gate checkpoint 都会向父 Session 日志增加一个完整 run snapshot。恢复因此是确定性的且不依赖进程内存，代价是重复序列化 history，并对该 Session 的 Conductor checkpoint 做线性 fold。
+
+可写专家不获得 shell，并且 filesystem write/edit tool 使用规范路径 guard。这使 Conductor policy 在同进程 executor 中得到执行；如果部署以后增加另一种 mutation tool，则在向 Headsman 或 Integrator 暴露之前，必须把该工具及其参数提取加入 policy。
+
+Arbiter GO 与 closeout 被刻意分成两次调用。额外授权往返可防止 gate 决策直接变成 commit、push、merge 或 deployment 操作，外部 actor 仍负责实际操作，Conductor 只记录其证据。
 
 ## Verification
 
-- `pnpm exec vitest run -t conductor` — 53 个测试通过，覆盖状态机/gate 引擎、持久化/恢复、路由/rework、run-id、drive、能力策略、Ralph 指令、preset 接线以及真实组合测试。
+- `pnpm run test -t conductor` — 71 个测试通过，覆盖状态机/gate 引擎、Session 日志持久化/恢复、路由/rework、run-id、drive、能力策略、Ralph 集成、preset 接线以及真实组合/closeout 测试。
 - `pnpm run typecheck` — 通过（host + client 聚合）。
-- 真实组合测试启动真实的 spawn 栈，驱动 Detective → Strategist → Devil's Advocate → Headsman → Auditor → Integrator → Arbiter，每个都是全新的结构化输出子 agent，最终返回 Arbiter 的 GO 决策。
-- `pnpm run doc-sync` 对 Conductor 表面是干净的（tool catalog、config catalog、markdown wrap、translation pairing、package paths）。剩余 gate 失败是无关的既有工作区债务（Biyocon UI rebrand、过时的 connections-ux 注释、生成的 oxlint-contract 探针以及 `temp/` i18n 配对）。
+- `pnpm run test:snapshot -t Conductor` — keyless Conductor closeout-authorization snapshot 通过 assembled one-shot application。
+- 真实组合测试启动真实 spawn/workflow 栈，驱动 Detective → Strategist → Devil's Advocate → Headsman → Auditor → Integrator → Arbiter 作为全新的结构化输出子 agent，持久化 GO checkpoint，并记录显式授权的 record-only closeout。
+- `pnpm run doc-sync` 的 28 个 gate 中有 26 个通过，Conductor 表面是干净的。剩余失败来自无关且 untracked 的 connections note 中的断链和缺失 pairing record，以及无关且 untracked 的 `temp/` 树中缺失的双语配对。
+- `pnpm run lint` 完成 repository build 后，仅因无关且 untracked 的 `temp/oh-my-openagent-dev` 树缺少 `bun-types` 而失败；repository lint runner 对全部 36 个变更的 TypeScript 文件通过。
 
 ## Risks
 
 - **Prompt engineering 风险**：runtime 可以强制执行工具限制和 schema，但模型仍然必须遵循角色指令。如果角色文件过于模糊，runtime 会产生格式正确但决策质量差的 envelope。缓解：保持角色文件简短精确；为代表性 Conductor run 添加 keyless snapshot 测试。
 - **Workflow 引擎范围蔓延**：Conductor 可能成为运行多 agent 工作的唯一方式，使通用 workflow 工具显得次要。缓解：保持 workflow 工具通用；Conductor 只是构建在其之上的一个高级产品。
-- **状态持久化复杂性**：session-log 事件是持久的，但查询它们以恢复并非无成本。缓解：将最新的 gate 和 run 摘要存储在按 `run_id` 索引的小型 host-side key-value 记录中，完整历史保留在 session log 中。
-- **能力策略缺口**：工具限制限制子 agent 看到的工具，但不会改变底层 OS 用户的权限。子 agent 仍然可以通过原始 shell 在 `allowed_paths` 之外写入。缓解：将工具限制与 filesystem policy 和 landlock（如可用）结合；明确说明 Conductor 的保证是 runtime 级别，而非 kernel 级别。
+- **状态持久化复杂性**：session-log 事件是持久的，但查询它们以恢复并非无成本。缓解：store 按 `run_id` 从最新 checkpoint 向前扫描；如果 checkpoint 量变得显著，可以用 projection 替代该 fold。
+- **能力策略扩展风险**：当前 policy 禁止 shell 并 guard `write`/`edit`，但未来 mutation tool 需要显式 allowlist 和参数感知规则。缓解：stage allowlist 默认拒绝，并要求每个新增 mutation tool 都有 executor-denial 测试。
 - **Ralph 双重用途**：如果 runtime 同时提供 Conductor Ralph 路径和独立的 `ralph` 工具，用户可能会混淆。缓解：独立工具仍用于显式的 fresh-agent 迭代；Conductor Ralph 是内部的 Headsman 原语，不作为顶层命令暴露。

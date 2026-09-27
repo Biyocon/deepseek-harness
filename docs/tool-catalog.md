@@ -30,7 +30,7 @@ This table connects model-visible tool names to the plugin package and service s
 | `@deepseek-ai/dsh-schedule` | `schedule_create`, `schedule_delete`, `schedule_list` | `ctx.tools`, `ctx.sessions`, `Session persistence`, `a future live root Agent` | `tool/call`, `schedule/change create or delete`, `tool/result` | - | Registered only inside live root Agent scopes created after the opt-in Schedule plugin loads. Version 1 accepts after_seconds, explicit absolute at, and bounded fixed-rate every_seconds, and discloses session-local delivery; management reads and mutations require the shared Session persistence barrier. |
 | `@deepseek-ai/dsh-tool-lsp` | `lsp` | `ctx.tools`, `ctx.lsp`, `ctx.systemPrompt` | `tool/call`, `tool/result` | - | The lsp tool keeps provider selection and language-server subprocesses behind ctx.lsp, so its model-visible schema stays stable across providers. Requires a registered provider (e.g. `@deepseek-ai/dsh-lsp-stdio`) at runtime; without one, a query returns the structured `LSP_UNAVAILABLE` error rather than changing the schema. |
 | `@deepseek-ai/dsh-tool-ralph` | `ralph` | `ctx.tools`, `ctx.workflowEngine`, `ctx.subagents`, `ctx.systemPrompt`, `a calling Agent (exec.agent parents every fresh round)` | `tool/call`, `tool/result`, `workflow and child session events during execution` | - | A fixed foreground workflow starts one fresh structured child per round; the model selects only the immutable objective and an optional round cap. |
-| `@deepseek-ai/dsh-tool-conductor` | `conductor` | `ctx.tools`, `ctx.subagents`, `ctx.skills`, `a calling Agent (exec.agent parents every specialist)` | `tool/call`, `tool/result`, `child session events through the chosen provider` | - | The model-facing Conductor tool drives the gated Detective-to-Arbiter state machine by spawning one fresh structured-output specialist per stage and returns the Arbiter GO/NO-GO decision or a blocker. |
+| `@deepseek-ai/dsh-tool-conductor` | `conductor` | `ctx.tools`, `ctx.subagents`, `ctx.skills`, `ctx.sessions`, `ctx.workflowEngine`, `a calling Agent (exec.agent parents every specialist)` | `tool/call`, `tool/result`, `conductor/checkpoint`, `workflow and child session events through the chosen provider` | - | The model-facing Conductor tool drives the gated Detective-to-Arbiter state machine by spawning one fresh structured-output specialist per stage and returns the Arbiter GO/NO-GO decision or a blocker. |
 | `@deepseek-ai/dsh-tool-skill` | `skill` | `ctx.tools`, `ctx.agents`, `ctx.skills` | `tool/call`, `tool/result`, `user/message replacement catalogs via agent.inject()` | - | - |
 | `@deepseek-ai/dsh-tool-session-query` | `session_event_read`, `session_event_search`, `session_event_trace`, `session_search`, `session_trace` | `ctx.tools`, `ctx.systemPrompt`, `ctx.sessionQuery`, `a calling Agent for workspace authority` | `tool/call`, `tool/result` | - | The five read-only tools hide provider cursors and authorize every result from the immutable calling agent session. The package is opt-in; compositions that need enforced deadlines or bounded inline output also mount the generic timeout or spill policies. |
 | `@deepseek-ai/dsh-tool-subagent` | `subagent` | `ctx.tools`, `ctx.subagents`, `ctx.systemPrompt` | `tool/call`, `tool/result`, `child session events through the chosen provider` | `subagent`, `subagent_fork` | The registered tool name is the load-time `toolName` config (default `subagent`); the schema above is that default. The shipped compositions load this package once per subagent backend, so the model additionally sees `subagent_fork` bound to the fork backend. Each instance's description, `run_in_background` parameter, and system-prompt policy follow its own `backgroundMode` and `enableRunInBackground`, so the two shipped schemas are not identical: `subagent` is `continuable` and defaults omitted calls to background with automatic settlement delivery, while `subagent_fork` stays `one-shot` and defaults them to foreground — see `packages/bundle/base/cordis.patch.yml` and `examples/acp-agent/cordis.yml`. |
@@ -1232,6 +1232,38 @@ Run a multi-role, gated Conductor workflow toward one objective. The tool drives
         "type": "string"
       }
     },
+    "scope": {
+      "type": "array",
+      "description": "Files, components, or concerns included in the run.",
+      "items": {
+        "type": "string"
+      }
+    },
+    "inputArtifacts": {
+      "type": "array",
+      "description": "Artifact paths or identifiers available to every specialist.",
+      "items": {
+        "type": "string"
+      }
+    },
+    "allowedPaths": {
+      "type": "array",
+      "description": "Owner-authorized roots that write-capable stages may modify; omission authorizes no writes.",
+      "items": {
+        "type": "string"
+      }
+    },
+    "excludedPaths": {
+      "type": "array",
+      "description": "Owner-declared roots excluded from every specialist write.",
+      "items": {
+        "type": "string"
+      }
+    },
+    "sourceBaseline": {
+      "type": "string",
+      "description": "Optional source version or commit observed at intake; Detective establishes it when omitted."
+    },
     "acceptanceCriteria": {
       "type": "array",
       "description": "Measurable criteria each gate pass is judged against.",
@@ -1241,7 +1273,7 @@ Run a multi-role, gated Conductor workflow toward one objective. The tool drives
     },
     "authority": {
       "type": "object",
-      "description": "The mandate owner and permitted external actions (read/write/commit/push/merge).",
+      "description": "The mandate owner and permitted external actions (read/write/commit/push/merge/release/publish/deploy).",
       "additionalProperties": false,
       "properties": {
         "owner": {
@@ -1261,6 +1293,126 @@ Run a multi-role, gated Conductor workflow toward one objective. The tool drives
     "runId": {
       "type": "string",
       "description": "Optional run id to resume an existing unfinished run."
+    },
+    "closeoutAuthorization": {
+      "type": "object",
+      "description": "Explicit owner authorization used only to close a prior Arbiter GO; Conductor records but never performs the action.",
+      "additionalProperties": false,
+      "properties": {
+        "authorizedBy": {
+          "type": "string"
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "record-only",
+            "read",
+            "write",
+            "commit",
+            "push",
+            "merge",
+            "release",
+            "publish",
+            "deploy"
+          ]
+        },
+        "outcomeEvidence": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "actionsTaken": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "unverifiedItems": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "openRisks": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "followUp": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "owner": {
+                "type": "string"
+              },
+              "dueCondition": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "owner",
+              "dueCondition"
+            ]
+          }
+        },
+        "traceability": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "mandate": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "baseline": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "changes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "verification": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "decision": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "mandate",
+            "baseline",
+            "changes",
+            "verification",
+            "decision"
+          ]
+        }
+      },
+      "required": [
+        "authorizedBy",
+        "action",
+        "outcomeEvidence",
+        "actionsTaken",
+        "unverifiedItems",
+        "openRisks",
+        "followUp",
+        "traceability"
+      ]
     }
   },
   "required": [

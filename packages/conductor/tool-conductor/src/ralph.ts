@@ -2,9 +2,8 @@
  * Conductor Ralph integration for the Headsman dispatch.
  *
  * Ralph is an internal Headsman primitive: when the run budget permits it, the
- * Headsman child is instructed to iterate with the existing `ralph` tool before
- * finalising its ImplementationReport. Ralph never passes Gate D or E itself —
- * the Headsman's envelope still does.
+ * runtime executes the existing Ralph runner before the final Headsman child.
+ * Ralph never passes Gate D or E itself — the Headsman's envelope still does.
  *
  * @module @deepseek-ai/dsh-tool-conductor/ralph
  */
@@ -19,7 +18,7 @@
 export function ralphDirective(maxRalphRounds: number, skillBody: string | undefined): string | undefined {
   if (maxRalphRounds < 1) return undefined
   return [
-    'You may iterate through bounded fresh-agent rounds with the ralph tool before finalising your ImplementationReport. Ralph is an execution primitive, not a gate: it never passes Gate D or E, and you still produce the final ImplementationReport yourself.',
+    'Conductor already executed the bounded internal Ralph rounds and passes their result in your dispatch. Do not call a Ralph tool. Ralph is an execution primitive, not a gate: it never passes Gate D or E, and you still produce the final ImplementationReport yourself.',
     'Ralph rules:\n' + (skillBody ?? '(ralph skill body unavailable)'),
     `Ralph round budget: ${maxRalphRounds}. Stop on complete, blocked, or the round limit, then return your ImplementationReport.`,
   ].join('\n\n')

@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
+import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import {
   ConductorRunId,
   InMemoryConductorRunStore,
+  SessionConductorRunStore,
   parseRun,
   recordGate,
   resumeRun,
@@ -14,6 +16,11 @@ function makeRun(overrides: Partial<ConductorRun> = {}): ConductorRun {
   return {
     runId: ConductorRunId('CON-2026-0001'),
     objective: 'ship the feature',
+    scope: [],
+    inputArtifacts: [],
+    allowedPaths: [],
+    excludedPaths: [],
+    sourceBaseline: null,
     authority: { owner: 'user', permittedActions: ['read'] },
     constraints: [],
     acceptanceCriteria: [],
@@ -21,6 +28,7 @@ function makeRun(overrides: Partial<ConductorRun> = {}): ConductorRun {
     baseline: null,
     currentStage: 'detective',
     history: [],
+    specialistReports: [],
     status: 'running',
     ...overrides,
   }
@@ -28,6 +36,32 @@ function makeRun(overrides: Partial<ConductorRun> = {}): ConductorRun {
 
 function gateRecord(partial: Pick<GateRecord, 'gate' | 'stage' | 'decision'> & Partial<GateRecord>): GateRecord {
   return { basis: [], evidenceReviewed: [], stateUpdate: '', ...partial }
+}
+
+function makeClosedRun(): ConductorRun {
+  return makeRun({
+    acceptanceCriteria: ['feature works'],
+    authority: { owner: 'user', permittedActions: ['read', 'deploy'] },
+    currentStage: 'closeout',
+    history: [gateRecord({
+      gate: 'G', stage: 'arbiter', decision: 'pass', nextStage: 'closeout',
+      basis: ['verified'], evidenceReviewed: ['report'], stateUpdate: 'move to closeout',
+    })],
+    status: 'closed',
+    decision: {
+      run_id: 'CON-2026-0001', decision: 'go', basis: ['verified'], evidence_reviewed: ['report'],
+      conditions: [], open_risks: [], required_follow_up: [],
+    },
+    closeout: {
+      run_id: 'CON-2026-0001', arbiter_decision: 'go', authorized_by: 'user', authorized_action: 'deploy',
+      actions_taken: ['recorded deployment'], outcome_evidence: ['health check'], unverified_items: [], open_risks: [],
+      follow_up: [],
+      traceability: {
+        mandate: ['request'], baseline: ['HEAD'], changes: ['release'], verification: ['health check'], decision: ['Gate G'],
+      },
+      status: 'closed',
+    },
+  })
 }
 
 describe('dsh-conductor persistence', () => {
@@ -56,6 +90,131 @@ describe('dsh-conductor persistence', () => {
     }))).toThrow(/invalid decision/)
   })
 
+  it('rejects malformed nested durable state before it reaches resume logic', () => {
+    expect(() => parseRun(JSON.stringify({
+      ...makeRun(),
+      authority: { owner: 'user', permittedActions: ['delete'] },
+    }))).toThrow(/invalid action/)
+    expect(() => parseRun(JSON.stringify({
+      ...makeRun(),
+      baseline: {
+        scopeVersion: 'scope-v1',
+        planVersion: 'plan-v1',
+        acceptanceVersion: 'acceptance-v1',
+        allowedPaths: [42],
+        excludedPaths: [],
+        rollbackReference: 'HEAD',
+      },
+    }))).toThrow(/baseline.allowedPaths/)
+    expect(() => parseRun(JSON.stringify({
+      ...makeRun(),
+      allowedPaths: ['packages/conductor'],
+      baseline: {
+        scopeVersion: 'scope-v1',
+        planVersion: 'plan-v1',
+        acceptanceVersion: 'acceptance-v1',
+        allowedPaths: ['.'],
+        excludedPaths: [],
+        rollbackReference: 'HEAD',
+      },
+    }))).toThrow(/baseline paths must match/)
+    expect(() => parseRun(JSON.stringify({
+      ...makeRun(),
+      excludedPaths: ['secrets'],
+      baseline: {
+        scopeVersion: 'scope-v1',
+        planVersion: 'plan-v1',
+        acceptanceVersion: 'acceptance-v1',
+        allowedPaths: [],
+        excludedPaths: [],
+        rollbackReference: 'HEAD',
+      },
+    }))).toThrow(/baseline paths must match/)
+    expect(() => parseRun(JSON.stringify({
+      ...makeRun(),
+      history: [gateRecord({ gate: 'A', stage: 'auditor', decision: 'pass', nextStage: 'strategist' })],
+    }))).toThrow(/gate A cannot belong to stage auditor/)
+    const { specialistReports: _omitted, ...withoutReports } = makeRun()
+    expect(() => parseRun(JSON.stringify(withoutReports))).toThrow(/specialistReports must be an array/)
+    expect(() => parseRun(JSON.stringify({
+      ...makeRun(), acceptanceCriteria: [''],
+    }))).toThrow(/acceptanceCriteria must contain only non-empty normalized strings/)
+    expect(() => parseRun(JSON.stringify({
+      ...makeRun(), acceptanceCriteria: ['same', 'same'],
+    }))).toThrow(/acceptanceCriteria must not contain duplicates/)
+  })
+
+  it('rejects semantically impossible gate records and lifecycle status', () => {
+    expect(() => parseRun(JSON.stringify({
+      ...makeRun(),
+      history: [gateRecord({ gate: 'A', stage: 'detective', decision: 'pass', nextStage: 'headsman' })],
+    }))).toThrow(/pass has invalid nextStage/)
+    expect(() => parseRun(JSON.stringify({
+      ...makeRun({ status: 'rework', currentStage: 'headsman' }),
+      history: [gateRecord({ gate: 'A', stage: 'detective', decision: 'rework', nextStage: 'headsman' })],
+    }))).toThrow(/rework has invalid defectClass/)
+    expect(() => parseRun(JSON.stringify({
+      ...makeRun(),
+      history: [gateRecord({ gate: 'A', stage: 'detective', decision: 'abort' })],
+    }))).toThrow(/status running does not match/)
+  })
+
+  it('rejects lifecycle records whose decision or closeout cannot support the status', () => {
+    expect(() => parseRun(JSON.stringify({
+      ...makeRun({ status: 'awaiting_authorization', currentStage: 'closeout' }),
+      decision: {
+        run_id: 'CON-2026-0002',
+        decision: 'go',
+        basis: ['verified'],
+        evidence_reviewed: ['report'],
+        conditions: [],
+        open_risks: [],
+        required_follow_up: [],
+      },
+    }))).toThrow(/decision.run_id must match/)
+    expect(() => parseRun(JSON.stringify({
+      ...makeRun({ status: 'closed', currentStage: 'closeout' }),
+      decision: {
+        run_id: 'CON-2026-0001',
+        decision: 'go',
+        basis: ['verified'],
+        evidence_reviewed: ['report'],
+        conditions: [],
+        open_risks: [],
+        required_follow_up: [],
+      },
+    }))).toThrow(/requires closeout/)
+    expect(() => parseRun(JSON.stringify({
+      ...makeRun({ status: 'awaiting_authorization', currentStage: 'closeout' }),
+      decision: {
+        run_id: 'CON-2026-0001', decision: 'go', basis: [''], evidence_reviewed: ['report'],
+        conditions: [], open_risks: [], required_follow_up: [],
+      },
+    }))).toThrow(/decision.basis must contain only non-empty normalized strings/)
+    expect(() => parseRun(JSON.stringify({
+      ...makeRun({ status: 'awaiting_authorization', currentStage: 'closeout' }),
+      decision: {
+        run_id: 'CON-2026-0001', decision: 'go', basis: ['verified'], evidence_reviewed: [],
+        conditions: [], open_risks: [], required_follow_up: [],
+      },
+    }))).toThrow(/GO requires a non-empty basis and reviewed evidence/)
+  })
+
+  it('rejects tampered durable closeout authority and outcome evidence', () => {
+    const valid = makeClosedRun()
+    expect(parseRun(serializeRun(valid))).toEqual(valid)
+    expect(() => parseRun(serializeRun({
+      ...valid, closeout: { ...valid.closeout!, authorized_by: 'impostor' },
+    }))).toThrow(/authorized_by must match authority.owner/)
+    expect(() => parseRun(serializeRun({
+      ...valid,
+      authority: { owner: 'user', permittedActions: ['read'] },
+    }))).toThrow(/authorized_action is outside the run authority/)
+    expect(() => parseRun(serializeRun({
+      ...valid, closeout: { ...valid.closeout!, outcome_evidence: [] },
+    }))).toThrow(/outcome_evidence must not be empty/)
+  })
+
   it('stores, loads, and deletes runs keyed by run id without aliasing', async () => {
     const store = new InMemoryConductorRunStore()
     const run = makeRun()
@@ -67,9 +226,31 @@ describe('dsh-conductor persistence', () => {
     expect(await store.load(run.runId)).toBeUndefined()
   })
 
-  it('rejects resume of a closed or aborted run', () => {
+  it('reconstructs the latest run from durable session checkpoints and flushes every mutation', async () => {
+    const session = Session.create(SessionId('conductor-checkpoints'))
+    let flushes = 0
+    const store = new SessionConductorRunStore(session, () => {
+      flushes += 1
+      return Promise.resolve()
+    })
+    const initial = makeRun()
+    await store.save(initial)
+    const advanced = recordGate(initial, {
+      decision: 'pass', basis: ['scope clear'], evidenceReviewed: ['report'], stateUpdate: 'advance',
+    })
+    await store.save(advanced)
+    const reopened = new SessionConductorRunStore(session, () => Promise.resolve())
+    expect(await reopened.load(initial.runId)).toEqual(advanced)
+    expect(flushes).toBe(2)
+    await store.delete(initial.runId)
+    expect(await reopened.load(initial.runId)).toBeUndefined()
+    expect(flushes).toBe(3)
+  })
+
+  it('rejects resume of a closed, aborted, or escalated run', () => {
     expect(() => { validateResumable(makeRun({ status: 'closed' })) }).toThrow(/closed/)
     expect(() => { validateResumable(makeRun({ status: 'aborted' })) }).toThrow(/aborted/)
+    expect(() => { validateResumable(makeRun({ status: 'escalated' })) }).toThrow(/owner resolution/)
   })
 
   it('rejects a run with no gate history parked past the initial stage', () => {
@@ -82,6 +263,14 @@ describe('dsh-conductor persistence', () => {
       history: [gateRecord({ gate: 'A', stage: 'detective', decision: 'pass', nextStage: 'strategist' })],
     })
     expect(() => { validateResumable(run) }).toThrow(/does not match last gate A/)
+  })
+
+  it('rejects a run whose documented history skips a stage', () => {
+    const run = makeRun({
+      currentStage: 'devils-advocate',
+      history: [gateRecord({ gate: 'B', stage: 'strategist', decision: 'pass', nextStage: 'devils-advocate' })],
+    })
+    expect(() => { validateResumable(run) }).toThrow(/history jumps to gate B/)
   })
 
   it('resumes a run at exactly its last documented, valid state', async () => {

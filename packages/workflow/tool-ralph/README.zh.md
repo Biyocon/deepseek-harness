@@ -6,6 +6,8 @@
 
 ## 契约
 
+可信 runtime consumer 可以调用导出的 `runRalphWorkflow(ctx, request)`，提供明确界限以及可选的 child tool/persona policy。面向模型的工具委托给同一 runner，因此 Conductor 不会重复 Ralph loop，也不会让 Ralph 通过 Conductor gate。
+
 `ralph({ objective, maxRounds? })` 会等待整个运行完成。部署配置中的 `maxRounds` 既是默认值，也是调用覆盖值的上限。每个 Ralph Round 通过 `subagentProvider` 启动一个子 agent；该提供方必须存在、支持结构化输出，并报告 `inheritsParentContext: false`。已配置的提供方以 `WorkflowStartRequest.subagentProvider` 传递，使固定脚本无法检查或更改路由，普通的模型编写 `workflow` 工具也不会因此获得提供方选择器。解析后的 Round 上限还会作为 `WorkflowStartRequest.maxTotalAgents` 传递，使固定循环与引擎的子 agent 总数后备上限协同；Ralph 上限超过引擎部署上限时，引擎会在发布运行前拒绝。
 
 每个子 agent 只接收不可变目标、当前 Ralph Round 及其上限、一条「共享工作区是权威状态」指令，以及上一个结构化交接内容。工作区是长期记忆；不会把父级对话或先前子 agent 会话作为初始内容。报告包含 `status: continue | complete | blocked`、非空摘要、证据、后续步骤和阻塞文本。固定工作流内部及消费方边界都会校验特定状态的语义和序列化后的 `maxHandoffChars` 上限。无效、缺失或过大的报告会使工作流失败，而不会被截断或误认为上限耗尽。

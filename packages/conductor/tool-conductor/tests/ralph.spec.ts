@@ -11,6 +11,7 @@ describe('dsh-tool-conductor ralph directive', () => {
     const directive = ralphDirective(3, 'round protocol')
     expect(directive).toContain('Ralph round budget: 3')
     expect(directive).toContain('never passes Gate D or E')
+    expect(directive).toContain('Do not call a Ralph tool')
     expect(directive).toContain('round protocol')
     expect(directive).toContain('final ImplementationReport')
   })

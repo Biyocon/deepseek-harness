@@ -1,0 +1,22 @@
+[
+  {
+    "kind": "chunks",
+    "chunks": [
+      { "type": "block-start", "index": 0, "blockType": "tool-call" },
+      { "type": "tool-call-delta", "index": 0, "id": "call_conductor", "name": "conductor", "argumentsDelta": "{\"objective\":\"Record an authorized closeout.\",\"authority\":{\"owner\":\"owner\",\"permittedActions\":[\"read\"]},\"closeoutAuthorization\":{\"authorizedBy\":\"owner\",\"action\":\"record-only\",\"outcomeEvidence\":[],\"actionsTaken\":[],\"unverifiedItems\":[],\"openRisks\":[],\"followUp\":[],\"traceability\":{\"mandate\":[],\"baseline\":[],\"changes\":[],\"verification\":[],\"decision\":[]}}}" },
+      { "type": "block-end", "index": 0, "block": { "type": "tool-call", "id": "call_conductor", "name": "conductor", "arguments": "{\"objective\":\"Record an authorized closeout.\",\"authority\":{\"owner\":\"owner\",\"permittedActions\":[\"read\"]},\"closeoutAuthorization\":{\"authorizedBy\":\"owner\",\"action\":\"record-only\",\"outcomeEvidence\":[],\"actionsTaken\":[],\"unverifiedItems\":[],\"openRisks\":[],\"followUp\":[],\"traceability\":{\"mandate\":[],\"baseline\":[],\"changes\":[],\"verification\":[],\"decision\":[]}}}" } },
+      { "type": "usage", "usage": { "inputTokens": 20, "outputTokens": 8 } },
+      { "type": "finish", "reason": { "kind": "tool-calls" } }
+    ]
+  },
+  {
+    "kind": "chunks",
+    "chunks": [
+      { "type": "block-start", "index": 0, "blockType": "text" },
+      { "type": "text-delta", "index": 0, "text": "CONDUCTOR CLOSEOUT BLOCKED" },
+      { "type": "block-end", "index": 0, "block": { "type": "text", "text": "CONDUCTOR CLOSEOUT BLOCKED" } },
+      { "type": "usage", "usage": { "inputTokens": 30, "outputTokens": 4 } },
+      { "type": "finish", "reason": { "kind": "stop" } }
+    ]
+  }
+]

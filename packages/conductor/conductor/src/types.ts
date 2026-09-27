@@ -52,7 +52,7 @@ export type ConductorStage =
  * is negative-space: a GO from The Arbiter grants none of them; only the
  * mandate owner's explicit authority does.
  */
-export type ConductorAction = 'read' | 'write' | 'commit' | 'push' | 'merge'
+export type ConductorAction = 'read' | 'write' | 'commit' | 'push' | 'merge' | 'release' | 'publish' | 'deploy'
 
 /**
  * Who owns the mandate and which external actions they permit. The permitted
@@ -122,6 +122,16 @@ export interface ConductorRun {
   runId: ConductorRunId
   /** The desired outcome. */
   objective: string
+  /** The files, components, or concerns included in the run. */
+  scope: string[]
+  /** Artifacts supplied at intake and available to every specialist. */
+  inputArtifacts: string[]
+  /** Owner-authorized roots that write-capable stages may modify. */
+  allowedPaths: string[]
+  /** Owner-declared roots excluded from every specialist write. */
+  excludedPaths: string[]
+  /** Source state observed at intake; Detective may establish it when absent. */
+  sourceBaseline: string | null
   /** The mandate owner and permitted external actions. */
   authority: ConductorAuthority
   /** Non-negotiable constraints on the work. */
@@ -136,8 +146,14 @@ export interface ConductorRun {
   currentStage: ConductorStage
   /** Every gate decision recorded so far, in order. */
   history: GateRecord[]
+  /** Validated specialist envelopes retained for downstream handoffs and Arbiter review. */
+  specialistReports: SpecialistEnvelope[]
   /** The run's lifecycle status. */
   status: ConductorRunStatus
+  /** The Arbiter decision recorded at Gate G, when reached. */
+  decision?: DecisionRecord
+  /** The explicit, record-only closeout authorization and evidence, when closed. */
+  closeout?: CloseoutRecord
 }
 
 /** The seven gates A–G, one per gated stage (Detective through Arbiter). */
@@ -248,6 +264,10 @@ export interface SpecialistEnvelope {
   run_id: string
   /** The dispatched role/stage name. */
   stage: string
+  /** Source or execution baseline the specialist actually assessed. */
+  baseline_ref: string
+  /** Source baseline established by a ready Detective when intake did not supply one. */
+  source_baseline?: string
   /** Delivery readiness — not a gate decision. */
   status: SpecialistStatus
   /** Concise result. */
@@ -264,6 +284,8 @@ export interface SpecialistEnvelope {
   artifacts: string[]
   /** Requests to change scope, plan, baseline, or authority. */
   change_requests: ChangeRequest[]
+  /** Candidate immutable execution baseline; required for a ready Gate C result. */
+  execution_baseline?: ExecutionBaseline
   /** The only allowed transition: back to Conductor. */
   recommended_transition: RecommendedTransition
   /** The specialist's confidence in its result. */
@@ -294,4 +316,65 @@ export interface DecisionRecord {
   open_risks: string[]
   /** Follow-up work the decision requires. */
   required_follow_up: string[]
+}
+
+/** An action named in an explicit closeout authorization. `record-only` performs no external action. */
+export type ConductorCloseoutAction = ConductorAction | 'record-only'
+
+/** Evidence-backed closeout input supplied by the mandate owner after an Arbiter GO. */
+export interface CloseoutAuthorization {
+  /** Must exactly match the run's mandate owner. */
+  authorizedBy: string
+  /** Action whose completed outcome is being recorded; the runtime never performs it. */
+  action: ConductorCloseoutAction
+  /** Concrete evidence that the named action completed, or that record-only closeout is appropriate. */
+  outcomeEvidence: string[]
+  /** Concrete actions already performed outside Conductor and now being recorded. */
+  actionsTaken: string[]
+  /** Remaining facts that were not verified. */
+  unverifiedItems: string[]
+  /** Risks that remain open after closeout. */
+  openRisks: string[]
+  /** Owned follow-up and the condition that makes it due. */
+  followUp: { owner: string; dueCondition: string }[]
+  /** Evidence links grouped by lifecycle concern. */
+  traceability: {
+    mandate: string[]
+    baseline: string[]
+    changes: string[]
+    verification: string[]
+    decision: string[]
+  }
+}
+
+/** Durable closeout record created only from an explicit {@link CloseoutAuthorization}. */
+export interface CloseoutRecord {
+  /** Run this closeout belongs to. */
+  run_id: string
+  /** Arbiter decision that opened closeout. */
+  arbiter_decision: 'go'
+  /** Mandate owner who explicitly authorized the recorded action. */
+  authorized_by: string
+  /** Authorized action recorded by closeout; no action is executed by Conductor. */
+  authorized_action: ConductorCloseoutAction
+  /** Concrete actions already performed outside Conductor. */
+  actions_taken: string[]
+  /** Evidence of the action's outcome. */
+  outcome_evidence: string[]
+  /** Facts left unverified at closeout. */
+  unverified_items: string[]
+  /** Risks left open at closeout. */
+  open_risks: string[]
+  /** Owned follow-up with an explicit triggering condition. */
+  follow_up: { owner: string; due_condition: string }[]
+  /** Evidence links grouped by lifecycle concern. */
+  traceability: {
+    mandate: string[]
+    baseline: string[]
+    changes: string[]
+    verification: string[]
+    decision: string[]
+  }
+  /** Terminal run status. */
+  status: 'closed'
 }

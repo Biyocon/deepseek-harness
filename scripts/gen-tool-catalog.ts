@@ -101,7 +101,7 @@ const OUT = 'docs/tool-catalog.md'
 function registerCatalogSubagentProvider(ctx: Context, name: string): void {
   const provider: SubagentProvider = {
     name,
-    capabilities: { outputSchema: true, depthLimit: true, toolFilter: true, persona: true },
+    capabilities: { outputSchema: true, depthLimit: true, toolFilter: true, toolGuard: true, persona: true },
     inheritsParentContext: false,
     start: () => Promise.reject(new Error('tool-catalog provider cannot start a child')),
     // Declared so consumers configured for continuable background mode mount.
@@ -410,12 +410,14 @@ const TOOL_PACKAGES: ToolPackage[] = [
     pkg: '@deepseek-ai/dsh-tool-conductor',
     dir: 'tool-conductor',
     source: 'packages/conductor/tool-conductor/src/index.ts',
-    requires: ['ctx.tools', 'ctx.subagents', 'ctx.skills', 'a calling Agent (exec.agent parents every specialist)'],
-    writes: ['tool/call', 'tool/result', 'child session events through the chosen provider'],
+    requires: ['ctx.tools', 'ctx.subagents', 'ctx.skills', 'ctx.sessions', 'ctx.workflowEngine', 'a calling Agent (exec.agent parents every specialist)'],
+    writes: ['tool/call', 'tool/result', 'conductor/checkpoint', 'workflow and child session events through the chosen provider'],
     async mount(ctx) {
       await ctx.plugin(SubagentRuntime)
       registerCatalogSubagentProvider(ctx, 'mock')
       await ctx.plugin(SkillRegistry)
+      await ctx.plugin(SessionStore)
+      await ctx.plugin(VmWorkflowEngine, { provider: 'mock' })
       await ctx.plugin(ToolConductor, { subagentProvider: 'mock' })
     },
     note:
