@@ -11,7 +11,7 @@ import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { JsonValue } from '@deepseek-ai/dsh-session'
 import type { SubagentProvider } from '@deepseek-ai/dsh-subagent'
 import { defineTool } from '@deepseek-ai/dsh-tools'
-import type { ToolCallView, ToolResultView } from '@deepseek-ai/dsh-tools'
+import type { ToolCallView, ToolGuard, ToolRestriction, ToolResultView } from '@deepseek-ai/dsh-tools'
 import type { WorkflowResult, WorkflowRun } from '@deepseek-ai/dsh-workflow'
 // Declaration merge only: makes ctx.systemPrompt visible for section registration.
 import type {} from '@deepseek-ai/dsh-system-prompt'
@@ -48,19 +48,30 @@ interface ResolvedConfig {
 
 type RalphRoundStatus = 'continue' | 'complete' | 'blocked'
 
-interface RalphRoundReport {
+/** Structured, bounded handoff produced by one fresh Ralph round. */
+export interface RalphRoundReport {
+  /** Whether another round is needed, the objective is complete, or progress is blocked. */
   readonly status: RalphRoundStatus
+  /** Concise round outcome. */
   readonly summary: string
+  /** Concrete evidence produced or observed during the round. */
   readonly evidence: string[]
+  /** Bounded handoff for a continuing round. */
   readonly nextSteps: string[]
+  /** Concrete blocker; empty unless `status` is `blocked`. */
   readonly blocker: string
 }
 
-type RalphRunStatus = 'complete' | 'blocked' | 'budget-limited'
+/** Successful terminal status for a bounded Ralph run. */
+export type RalphRunStatus = 'complete' | 'blocked' | 'budget-limited'
 
-interface RalphRunResult {
+/** Validated terminal report and the number of fresh rounds started. */
+export interface RalphRunResult {
+  /** Terminal run status. */
   readonly status: RalphRunStatus
+  /** Number of fresh child rounds started. */
   readonly roundsStarted: number
+  /** Last validated round report. */
   readonly report: RalphRoundReport
 }
 
@@ -71,6 +82,40 @@ interface RalphRoundFailure {
 }
 
 type RalphTerminalResult = RalphRunResult | RalphRoundFailure
+
+/** Trusted runtime request shared by the model-facing tool and Conductor. */
+export interface RalphWorkflowRequest {
+  /** Immutable objective shared with every fresh round. */
+  readonly objective: string
+  /** Positive round cap and workflow child ceiling. */
+  readonly maxRounds: number
+  /** Maximum serialized characters in a cross-round report. */
+  readonly maxHandoffChars: number
+  /** Maximum characters retained in a rendered failure. */
+  readonly maxResultChars: number
+  /** Fresh structured-output subagent provider. */
+  readonly subagentProvider: string
+  /** Parent agent attributed to every round. */
+  readonly parent: import('@deepseek-ai/dsh-agent').Agent
+  /** Cancellation signal for the complete run. */
+  readonly signal: AbortSignal
+  /** Optional name-level child tool restriction. */
+  readonly childToolFilter?: ToolRestriction
+  /** Optional trusted argument-aware child tool guard. */
+  readonly childToolGuard?: ToolGuard
+  /** Optional persona applied to every round. */
+  readonly childPersona?: string
+}
+
+/** Settled, validated Ralph result returned to a trusted runtime consumer. */
+export interface RalphWorkflowOutcome {
+  /** Workflow run identity. */
+  readonly runId: string
+  /** Fresh child count reported by the engine. */
+  readonly agentsStarted: number
+  /** Validated Ralph result. */
+  readonly result: RalphRunResult
+}
 
 interface RalphCallArgs {
   objective: string
@@ -401,6 +446,53 @@ function presentResult(args: RalphCallArgs, result: { content: ContentBlock[]; i
   return { card: 'generic' }
 }
 
+/**
+ * Run the fixed Ralph workflow for a trusted runtime consumer.
+ * @param ctx - context carrying workflow and subagent services.
+ * @param request - bounded objective, route, parent, cancellation, and optional child policy.
+ * @returns validated terminal Ralph report.
+ */
+export async function runRalphWorkflow(ctx: Context, request: RalphWorkflowRequest): Promise<RalphWorkflowOutcome> {
+  const objective = request.objective.trim()
+  if (objective.length === 0) throw new Error('Ralph objective must be a non-empty string')
+  const maxRounds = resolveMaxRounds(request.maxRounds, request.maxRounds)
+  if (!Number.isSafeInteger(request.maxHandoffChars) || request.maxHandoffChars < 1) {
+    throw new TypeError('Ralph maxHandoffChars must be a positive safe integer')
+  }
+  if (!Number.isSafeInteger(request.maxResultChars) || request.maxResultChars < 1) {
+    throw new TypeError('Ralph maxResultChars must be a positive safe integer')
+  }
+  void requireFreshProvider(ctx, request.subagentProvider)
+
+  const run: WorkflowRun = ctx.workflowEngine.start({
+    script: RALPH_SCRIPT,
+    meta: RALPH_META,
+    args: { objective, maxRounds, maxHandoffChars: request.maxHandoffChars },
+    subagentProvider: request.subagentProvider,
+    maxTotalAgents: maxRounds,
+    parent: request.parent,
+    signal: request.signal,
+    ...request.childToolFilter !== undefined ? { childToolFilter: request.childToolFilter } : {},
+    ...request.childToolGuard !== undefined ? { childToolGuard: request.childToolGuard } : {},
+    ...request.childPersona !== undefined ? { childPersona: request.childPersona } : {},
+  })
+  const onAbort = (): void => { run.cancel('parent step aborted') }
+  request.signal.addEventListener('abort', onAbort, { once: true })
+  if (request.signal.aborted) run.cancel('parent step aborted')
+
+  try {
+    const settled = await run.result
+    const error = stopReasonError(settled)
+    if (error !== undefined) throw new Error(error)
+    const value = readRunResult(settled.value, maxRounds, request.maxHandoffChars)
+    if (value.status === 'round-failed') throw new Error(renderRoundFailure(value, request.maxResultChars))
+    return { runId: run.id, agentsStarted: settled.agentsStarted, result: value }
+  } finally {
+    request.signal.removeEventListener('abort', onAbort)
+    await run.dispose()
+  }
+}
+
 /** Register the fixed Ralph tool and its explicit-ask usage policy. */
 export function apply(ctx: Context, config: Config): void {
   const resolved = resolveConfig(config)
@@ -439,38 +531,20 @@ export function apply(ctx: Context, config: Config): void {
       if (parent === undefined) {
         throw new Error('Ralph tool requires a calling agent (exec.agent was undefined)')
       }
-      const objective = args.objective.trim()
-      if (objective.length === 0) throw new Error('Ralph objective must be a non-empty string')
       const maxRounds = resolveMaxRounds(args.maxRounds, resolved.maxRounds)
-      void requireFreshProvider(ctx, resolved.subagentProvider)
-
-      const run: WorkflowRun = ctx.workflowEngine.start({
-        script: RALPH_SCRIPT,
-        meta: RALPH_META,
-        args: { objective, maxRounds, maxHandoffChars: resolved.maxHandoffChars },
+      const outcome = await runRalphWorkflow(ctx, {
+        objective: args.objective,
+        maxRounds,
+        maxHandoffChars: resolved.maxHandoffChars,
+        maxResultChars: resolved.maxResultChars,
         subagentProvider: resolved.subagentProvider,
-        maxTotalAgents: maxRounds,
         parent,
         signal: exec.signal,
       })
-      const onAbort = (): void => { run.cancel('parent step aborted') }
-      exec.signal.addEventListener('abort', onAbort, { once: true })
-      if (exec.signal.aborted) run.cancel('parent step aborted')
-
-      try {
-        const settled = await run.result
-        const error = stopReasonError(settled)
-        if (error !== undefined) throw new Error(error)
-        const value = readRunResult(settled.value, maxRounds, resolved.maxHandoffChars)
-        if (value.status === 'round-failed') throw new Error(renderRoundFailure(value, resolved.maxResultChars))
-        return {
-          runId: run.id,
-          agentsStarted: settled.agentsStarted,
-          result: value as unknown as JsonValue,
-        }
-      } finally {
-        exec.signal.removeEventListener('abort', onAbort)
-        await run.dispose()
+      return {
+        runId: outcome.runId,
+        agentsStarted: outcome.agentsStarted,
+        result: outcome.result as unknown as JsonValue,
       }
     },
     presentCall,

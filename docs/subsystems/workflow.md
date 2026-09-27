@@ -29,6 +29,12 @@ interface WorkflowStartRequest {
   subagentProvider?: string
   /** Optional per-run total-child ceiling. */
   maxTotalAgents?: number
+  /** Trusted host-owned tool visibility applied to every child in this run. */
+  childToolFilter?: ToolRestriction
+  /** Trusted host-owned argument-aware policy applied to every child in this run. */
+  childToolGuard?: ToolGuard
+  /** Trusted host-owned persona applied to every child in this run. */
+  childPersona?: string
   /** The agent on whose behalf the run executes (parent of every child). */
   parent: Agent
   /** Cancels the run when aborted. */

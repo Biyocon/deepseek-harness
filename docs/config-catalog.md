@@ -2372,6 +2372,28 @@ export interface Config {
 
 Source: [`packages/shell/tool-bash-persistent/src/index.ts:400`](../packages/shell/tool-bash-persistent/src/index.ts)
 
+<a id="deepseek-aidsh-tool-conductor"></a>
+
+## `@deepseek-ai/dsh-tool-conductor`
+
+Requires: `tools` · `subagents` · `skills` · `sessions` · `workflowEngine`
+
+```ts config-catalog
+/** Deployment policy for the Conductor tool. */
+export interface Config {
+  /** Fresh structured-output subagent provider (default `spawn`). */
+  subagentProvider?: string
+  /** Default rework budget when a call names none (default 3). */
+  maxReworkCycles?: number
+  /** Default Ralph round budget; 0 disables the Headsman sub-phase (default 0). */
+  maxRalphRounds?: number
+  /** Maximum serialized characters in one Ralph handoff (default 16384). */
+  maxRalphHandoffChars?: number
+}
+```
+
+Source: [`packages/conductor/tool-conductor/src/index.ts:52`](../packages/conductor/tool-conductor/src/index.ts)
+
 <a id="deepseek-aidsh-tool-fs"></a>
 
 ## `@deepseek-ai/dsh-tool-fs`
@@ -3130,6 +3152,8 @@ Imported as libraries by other packages; a `cordis.yml` cannot load them.
 - `@deepseek-ai/dsh-client-web` ([`packages/client/web/src/index.ts`](../packages/client/web/src/index.ts))
 - `@deepseek-ai/dsh-client-web-react` ([`packages/client/web-react/src/index.ts`](../packages/client/web-react/src/index.ts))
 - `@deepseek-ai/dsh-cmdline` ([`packages/boot/cmdline/src/index.ts`](../packages/boot/cmdline/src/index.ts))
+- `@deepseek-ai/dsh-conductor` ([`packages/conductor/conductor/src/index.ts`](../packages/conductor/conductor/src/index.ts))
+- `@deepseek-ai/dsh-conductor-presets` ([`packages/conductor/conductor-presets/src/index.ts`](../packages/conductor/conductor-presets/src/index.ts))
 - `@deepseek-ai/dsh-home-paths` ([`packages/util/home-paths/src/index.ts`](../packages/util/home-paths/src/index.ts))
 - `@deepseek-ai/dsh-hook-protocol` ([`packages/hooks/hook-protocol/src/index.ts`](../packages/hooks/hook-protocol/src/index.ts))
 - `@deepseek-ai/dsh-launch-environment` ([`packages/util/launch-environment/src/index.ts`](../packages/util/launch-environment/src/index.ts))

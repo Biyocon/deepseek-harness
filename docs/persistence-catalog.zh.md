@@ -391,6 +391,22 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 
 来源：[`packages/compaction/compaction/src/types.ts:33`](../packages/compaction/compaction/src/types.ts)
 
+### `conductor/*`
+
+<a id="conductorcheckpoint--log-only"></a>
+
+#### `conductor/checkpoint` — 仅日志
+
+```ts persistence-catalog
+/**
+ * Commits one complete Conductor run snapshot. Last checkpoint per run id wins.
+ * @param data - run id and serialized snapshot or tombstone.
+ */
+'conductor/checkpoint': ConductorCheckpointData
+```
+
+来源：[`packages/conductor/conductor/src/persistence.ts:42`](../packages/conductor/conductor/src/persistence.ts)
+
 ### `feedback/*`
 
 <a id="feedbackrecord--log-only"></a>

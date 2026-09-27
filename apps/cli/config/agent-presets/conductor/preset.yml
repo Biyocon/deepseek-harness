@@ -1,0 +1,3 @@
+name: Conductor 模式
+description: 通过持久 gate、受限的全新专家、独立审计和显式 closeout 授权执行多角色工作。
+order: 5

@@ -34,6 +34,9 @@ const NO_MODEL_EXPERIENCE_SECTION: Readonly<Record<string, string>> = {
   'packages/util/brand': 'The package is a type-only primitive erased at compile time.',
   'packages/util/home-paths': 'The package only resolves harness-owned host paths; model-facing consumers own any rendered use.',
   'packages/util/launch-environment': 'The package only resolves host environment values; model-facing consumers own any rendered use.',
+  'packages/conductor/conductor': 'The bootstrap package exports no runtime behavior.',
+  'packages/conductor/tool-conductor': 'The bootstrap package registers no model-facing tool.',
+  'packages/conductor/conductor-presets': 'The bootstrap package mounts no preset composition.',
 }
 
 /**

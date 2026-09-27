@@ -282,10 +282,10 @@ describe('dsh-subagent-spawn-in-process', () => {
     await parentHandle.dispose()
   })
 
-  it('advertises every start-time capability (depthLimit, outputSchema, toolFilter, persona)', async () => {
+  it('advertises every start-time capability (depthLimit, outputSchema, toolFilter, toolGuard, persona)', async () => {
     const { ctx } = await setup([])
     const provider = ctx.subagents.getProvider('spawn')!
-    expect(provider.capabilities).toEqual({ outputSchema: true, depthLimit: true, toolFilter: true, persona: true })
+    expect(provider.capabilities).toEqual({ outputSchema: true, depthLimit: true, toolFilter: true, toolGuard: true, persona: true })
   })
 
   it('unregisters the provider when its fiber is disposed (HMR safety)', async () => {
@@ -380,7 +380,7 @@ describe('dsh-subagent-spawn-in-process', () => {
     expect(typeof unwrapped.apply).toBe('function')
   })
 
-  describe('persona and toolFilter (the scoped child world)', () => {
+  describe('persona and tool policy (the scoped child world)', () => {
     it('a per-child persona shadows the deployment persona in the child request only', async () => {
       const { ctx, parent, adapter } = await setup([
         textResponse('parent answer'),
@@ -426,6 +426,37 @@ describe('dsh-subagent-spawn-in-process', () => {
       const child = ctx.agents.get(run.id)!
       const toolResult = child.session.events.find(e => e.type === 'tool/result')!
       expect(JSON.stringify(toolResult.data)).toContain('unknown tool')
+      await run.dispose()
+    })
+
+    it('toolGuard keeps a tool visible but denies matching arguments inside the child executor', async () => {
+      const { ctx, parent, adapter } = await setup([
+        toolCallResponse('c1', 'guarded_write', { file_path: '../outside.md' }),
+        textResponse('done'),
+      ])
+      let executions = 0
+      ctx.tools.register(defineContentToolFixture({
+        name: 'guarded_write', description: 'global', parameters: {},
+        execute: () => {
+          executions += 1
+          return Promise.resolve([{ type: 'text', text: 'ran' }])
+        },
+      }))
+      const run = await start(ctx, 'spawn', {
+        prompt: [{ type: 'text', text: 'do X' }],
+        parent,
+        toolGuard: exec => typeof exec.arguments === 'object'
+          && exec.arguments !== null
+          && (exec.arguments as Record<string, unknown>)['file_path'] === '../outside.md'
+          ? 'outside denied'
+          : undefined,
+      })
+      expect((await run.result).stopReason).toBe('completed')
+      expect((adapter.requests[0]!.tools ?? []).map(tool => tool.name)).toContain('guarded_write')
+      const child = ctx.agents.get(run.id)!
+      const toolResult = child.session.events.find(event => event.type === 'tool/result')!
+      expect(JSON.stringify(toolResult.data)).toContain('outside denied')
+      expect(executions).toBe(0)
       await run.dispose()
     })
 
