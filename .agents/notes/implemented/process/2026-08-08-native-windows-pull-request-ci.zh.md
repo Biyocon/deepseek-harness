@@ -55,3 +55,5 @@ Wine 保留必需聚合流程现有的关键路径和作业身份。`all checks 
 尽管如此，每个拉取请求都会获得真实 NT 内核、NTFS、PowerShell、Windows 进程、原生插件和受支持源码覆盖率信号。原生作业会重复设置流程与两项阻断构建，在标准镜像上明显更慢；但它也会暴露兼容性通道掩盖的路径、watcher、生命周期与 fixture 缺陷。
 
 维护者必须保留两种有意设计的执行拓扑：Wine 快照使用 Linux 安装加 hoisted 布局来触达 win32 二进制文件，而原生作业在组织自有的 16 核 Windows 运行器上使用不可变工作区。任一作业独有的失败都必须依据该边界分类，不得削弱或静默跳过。
+
+Biyocon 公共 fork 例外。公共 fork `Biyocon/deepseek-harness` 无法访问上游使用的私有企业或自托管运行器标签。在该 fork 中，独立的原生 Windows 作业解析到标准 GitHub 托管的 `windows-2025` 运行器，而非 `dsh-windows-2025-16core`。自托管热备演练（`serial-linux-selfhosted`、`serial-windows`）和手动大型运行器基准测试通过 `github.repository != 'Biyocon/deepseek-harness'` 进行保护，因此不会在公共 fork 上执行。上游工作流定义在其他方面保持字节级一致。

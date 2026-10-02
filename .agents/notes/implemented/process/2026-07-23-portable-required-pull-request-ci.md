@@ -18,6 +18,8 @@ The three Linux primary jobs, Node compatibility, Python SDK unit suite, Python 
 
 The [larger-runner decision](2026-07-22-evidence-based-larger-hosted-runners.md) owns the current primary topology and its measurements. The [serial cross-platform reference](2026-07-21-serial-cross-platform-ci-reference.md) remains the independent standard-hosted completeness check, and the manual larger-runner suites retain size comparisons without expanding the ordinary required matrix.
 
+Biyocon public-fork exception. The public fork at `Biyocon/deepseek-harness` has no access to the private enterprise or self-hosted runner labels used upstream. In that fork, the required pull-request jobs that resolve through enterprise pools upstream instead use standard GitHub-hosted runners: the three Linux primary jobs and the `all checks passed` aggregate resolve to `ubuntu-latest`, while the independent native Windows job resolves to `windows-2025`. The self-hosted standby drills (`serial-linux-selfhosted`, `serial-windows`) and the manual larger-runner benchmarks are guarded with `github.repository != 'Biyocon/deepseek-harness'` so they do not execute on the public fork. The upstream workflow definitions otherwise remain byte-identical.
+
 ## Alternatives considered
 
 **Keep the Linux primary jobs and aggregate on standard capacity.** This removes the remaining enterprise allocation dependency, but complete standard-runner jobs give materially slower feedback and still experience shared-capacity queues. The current split retains portable compatibility and serial evidence while spending enterprise capacity on the Linux primary critical path.

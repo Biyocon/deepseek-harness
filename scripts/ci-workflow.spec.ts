@@ -85,7 +85,7 @@ describe('CI workflow', () => {
     expect(wineAptCache['runs-on']).toBe('ubuntu-latest')
 
     // serial-windows: master-only standby, self-hosted, non-blocking.
-    expect(serialWindows.if).toBe("github.event_name == 'push' && github.ref == 'refs/heads/master'")
+    expect(serialWindows.if).toBe("github.repository != 'Biyocon/deepseek-harness' && github.event_name == 'push' && github.ref == 'refs/heads/master'")
     expect(serialWindows['runs-on']).toEqual(['self-hosted', 'dsh-win-ci', 'windows'])
     expect(serialWindows.name).toBe('serial / windows (self-hosted standby)')
 
@@ -106,6 +106,20 @@ describe('CI workflow', () => {
     expect(aggregate['runs-on']).toContain('DSH_CI_FAILOVER_LINUX')
     expect(aggregate['runs-on']).not.toContain('DSH_CI_FAILOVER_WINDOWS')
     expect(aggregate['runs-on']).toContain('vm-backup')
+
+    // Biyocon public fork uses standard hosted runners; upstream else branches
+    // stay byte-identical.
+    const runsOn = (job: unknown): string => {
+      if (!isRecord(job) || typeof job['runs-on'] !== 'string') throw new TypeError('job must define a string runs-on')
+      return job['runs-on']
+    }
+    const biyoconUbuntuLatest = "github.repository == 'Biyocon/deepseek-harness' && 'ubuntu-latest'"
+    const biyoconWindows2025 = "github.repository == 'Biyocon/deepseek-harness' && 'windows-2025'"
+    expect(runsOn(node24).replace(/\s+/g, ' ')).toContain(biyoconUbuntuLatest)
+    expect(runsOn(node24Coverage).replace(/\s+/g, ' ')).toContain(biyoconUbuntuLatest)
+    expect(runsOn(node24Consumers).replace(/\s+/g, ' ')).toContain(biyoconUbuntuLatest)
+    expect(runsOn(windowsNative).replace(/\s+/g, ' ')).toContain(biyoconWindows2025)
+    expect(runsOn(aggregate).replace(/\s+/g, ' ')).toContain(biyoconUbuntuLatest)
   })
 
   it('exempts push from cancellation, so one master merge does not cancel the running drill', () => {
@@ -132,7 +146,7 @@ describe('CI workflow', () => {
       if (!isRecord(job)) throw new TypeError(`${name} must be defined`)
       expect(job.concurrency).toBeUndefined()
       // Both stay master-push-only; that is what makes the push carve-out safe.
-      expect(job.if).toBe("github.event_name == 'push' && github.ref == 'refs/heads/master'")
+      expect(job.if).toBe("github.repository != 'Biyocon/deepseek-harness' && github.event_name == 'push' && github.ref == 'refs/heads/master'")
     }
 
     // What bounds the cost of exempting push: a master push may only carry the
@@ -146,8 +160,8 @@ describe('CI workflow', () => {
     const NOT_PUSH_REACHABLE = new Set([
       "github.event_name == 'pull_request'",
       "always() && github.event_name == 'pull_request'",
-      "github.event_name == 'workflow_dispatch' && inputs.suite == 'larger-runner-benchmark'",
-      "github.event_name == 'workflow_dispatch' && inputs.suite == 'consolidated-runner-benchmark'",
+      "github.repository != 'Biyocon/deepseek-harness' && github.event_name == 'workflow_dispatch' && inputs.suite == 'larger-runner-benchmark'",
+      "github.repository != 'Biyocon/deepseek-harness' && github.event_name == 'workflow_dispatch' && inputs.suite == 'consolidated-runner-benchmark'",
     ])
     const pushReachable = Object.entries(workflow.jobs)
       .filter(([, job]) => {
@@ -173,6 +187,14 @@ describe('CI workflow', () => {
       expect(job.strategy['max-parallel']).toBe(12)
       expect(job['timeout-minutes']).toBe(15)
     }
+
+    // The Biyocon public fork must not run the self-hosted/benchmark jobs.
+    expect(workflowJob(workflow, 'larger-runner-benchmark').if).toBe(
+      "github.repository != 'Biyocon/deepseek-harness' && github.event_name == 'workflow_dispatch' && inputs.suite == 'larger-runner-benchmark'",
+    )
+    expect(workflowJob(workflow, 'consolidated-runner-benchmark').if).toBe(
+      "github.repository != 'Biyocon/deepseek-harness' && github.event_name == 'workflow_dispatch' && inputs.suite == 'consolidated-runner-benchmark'",
+    )
   })
 
   it('keeps supported LSP source under native Windows coverage', () => {

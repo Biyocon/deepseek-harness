@@ -30,6 +30,8 @@ master 分支的参考作业仅用于诊断，不参与拉取请求所要求的 
 
 可移植的参考流程使用 GitHub 标准的 `ubuntu-latest`、`macos-latest` 和 `windows-2025` 标签。拉取请求必需的 Windows 作业在 `ubuntu-latest` 上通过 Wine 运行，而独立的拉取请求原生作业在正常运行下使用托管的 `dsh-windows-2025-16core` 运行器，故障切换时使用自托管 `[self-hosted, dsh-win-ci, windows]` 池（参见[故障切换手册](2026-07-26-ci-failover-runbook.md)），依据[双 Windows 决策](2026-08-08-native-windows-pull-request-ci.md)不参与必需聚合流程；`serial / windows` 启用时，仍作为第二个完整且未分片的原生内核标尺。依据[必需 CI 决策](2026-07-23-portable-required-pull-request-ci.md)，拉取请求必需作业使用可移植的标准容量。更高核心数的托管运行器仍仅用于手动基准测试，因为正确性路径必须无需仓库外部的运行器配置即可运行。
 
+Biyocon 公共 fork 例外。公共 fork `Biyocon/deepseek-harness` 无法访问上游使用的私有企业或自托管运行器标签。在该 fork 中，上游通过企业池解析的必需拉取请求作业改用标准 GitHub 托管运行器：三个 Linux 主作业和 `all checks passed` 聚合流程解析到 `ubuntu-latest`，而独立的原生 Windows 作业解析到 `windows-2025`。自托管热备演练（`serial-linux-selfhosted`、`serial-windows`）和手动大型运行器基准测试通过 `github.repository != 'Biyocon/deepseek-harness'` 进行保护，因此不会在公共 fork 上执行。上游工作流定义在其他方面保持字节级一致。
+
 ## 曾考虑的替代方案
 
 - **将每个超时值设为相应延迟目标**：不予采纳，因为调度波动会中止原本正确的执行，并使诊断回归所需的证据无法产生。
