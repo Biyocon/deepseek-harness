@@ -10,9 +10,9 @@ The Web build has a document title and favicon but no manifest from which a brow
 
 ## Decision
 
-The Web entry links `/manifest.webmanifest`, which Vite copies from `apps/web/public/` into the production build. The manifest names the product `DeepSeek Harness`, gives installed chrome the compact name `DSH`, and fixes `id`, `start_url`, and `scope` at `/`. It requests `display: "fullscreen"` so supporting browsers can give the installed editor-like surface the available display area while leaving ordinary tabs unchanged; browsers may apply user overrides or fall back to another display mode. Its icon entry reuses `/favicon.svg` as an SVG of size `any` and purpose `any`.
+The Web entry links `/manifest.webmanifest`, which Vite copies from `apps/web/public/` into the production build. The manifest names the product `Biyocon Harness`, gives installed chrome the compact name `Biyocon`, and fixes `id`, `start_url`, and `scope` at `/`. It requests `display: "fullscreen"` so supporting browsers can give the installed editor-like surface the available display area while leaving ordinary tabs unchanged; browsers may apply user overrides or fall back to another display mode. Its two icon entries link `/biyocon-brandmark-192.png` and `/biyocon-brandmark-512.png` as PNG icons of sizes `192x192` and `512x512`, each with purpose `any`.
 
-This follows code-server's fullscreen choice without copying its `window-controls-overlay` display override. DSH has no custom title bar or layout around native window controls, so such an override would supersede fullscreen without owning the required safe layout.
+This follows code-server's fullscreen choice without copying its `window-controls-overlay` display override. The Web UI has no custom title bar or layout around native window controls, so such an override would supersede fullscreen without owning the required safe layout.
 
 The manifest deliberately has no `lang`, `theme_color`, or `background_color`. The product surface is bilingual rather than owned by one manifest language, and either static color can disagree with one of the resolved app palettes. Theme metadata therefore remains outside the install manifest.
 
@@ -20,7 +20,7 @@ This feature adds no service worker, cache policy, or offline fallback. The mani
 
 ## Verification
 
-The built-Web test parses the emitted manifest and pins the complete metadata object, including the human-visible name, compact name, icon, root identity, launch boundary, and display mode, while also verifying that the production `index.html` retains the link. The `dsh-host-frontend-static` real Loader composition test serves a `.webmanifest` fixture and pins its `application/manifest+json` media type.
+The built-Web test parses the emitted manifest and pins the complete metadata object, including the human-visible name, compact name, both PNG icons, root identity, launch boundary, and display mode, while also verifying that the production `index.html` retains the link. A further built-Web check asserts only that the shipped `favicon.png` and `apple-touch-icon.png` are non-empty; no pixel or provenance validation is claimed. The `dsh-host-frontend-static` real Loader composition test serves a `.webmanifest` fixture and pins its `application/manifest+json` media type.
 
 ## Alternatives considered
 
@@ -30,7 +30,7 @@ The built-Web test parses the emitted manifest and pins the complete metadata ob
 
 **Choose one static background and theme color.** Rejected because the app resolves light and dark palettes at runtime, so either fixed value is knowingly wrong for one supported state.
 
-**Ship raster and maskable icon variants immediately.** Rejected until a supported installation target demonstrates a requirement the existing scalable favicon cannot meet. New variants remain an additive manifest change rather than a prerequisite for exposing the current identity.
+**Ship maskable icon variants immediately.** Rejected until a supported installation target demonstrates a requirement the shipped raster brandmark icons cannot meet. New variants remain an additive manifest change rather than a prerequisite for exposing the current identity.
 
 **Assert only root and display fields in the built artifact.** Rejected because dropping or changing the product name, compact name, or icon is also a shipped install regression. The test intentionally requires an explicit edit whenever any manifest metadata changes.
 

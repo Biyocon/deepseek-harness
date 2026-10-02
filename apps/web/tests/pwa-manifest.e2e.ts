@@ -12,24 +12,31 @@ it('ships install metadata with the built web application', async () => {
   const manifest: unknown = JSON.parse(await readFile(join(DIST_ROOT, 'manifest.webmanifest'), 'utf8'))
   expect(manifest).toEqual({
     id: '/',
-    name: 'DeepSeek Harness',
-    short_name: 'DSH',
+    name: 'Biyocon Harness',
+    short_name: 'Biyocon',
     start_url: '/',
     scope: '/',
     display: 'fullscreen',
-    icons: [{
-      src: '/favicon.svg',
-      sizes: 'any',
-      type: 'image/svg+xml',
-      purpose: 'any',
-    }],
+    icons: [
+      {
+        src: '/biyocon-brandmark-192.png',
+        sizes: '192x192',
+        type: 'image/png',
+        purpose: 'any',
+      },
+      {
+        src: '/biyocon-brandmark-512.png',
+        sizes: '512x512',
+        type: 'image/png',
+        purpose: 'any',
+      },
+    ],
   })
 })
 
-it('ships a favicon that switches to a light mark under dark color scheme', async () => {
-  const favicon = await readFile(join(DIST_ROOT, 'favicon.svg'), 'utf8')
-  // The light fill must live inside the dark-scheme media query, so the icon
-  // stays black in light mode and only turns white under a dark scheme.
-  expect(favicon).toMatch(/@media \(prefers-color-scheme: dark\)\s*{\s*path\s*{[^}]*fill:\s*#fff/i)
-  expect(favicon).toContain('fill="#000"')
+it('ships a PNG favicon and touch icon derived from the Biyocon brandmark', async () => {
+  const favicon = await readFile(join(DIST_ROOT, 'favicon.png'))
+  expect(favicon.length).toBeGreaterThan(0)
+  const appleTouch = await readFile(join(DIST_ROOT, 'apple-touch-icon.png'))
+  expect(appleTouch.length).toBeGreaterThan(0)
 })
